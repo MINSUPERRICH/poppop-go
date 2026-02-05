@@ -15,7 +15,8 @@ import {
   Plus, X, Power, Shield, Map as MapIcon, Grid,
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
-  Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag
+  Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
+  Car
 } from 'lucide-react';
 
 // --- Secure Firebase Configuration ---
@@ -50,7 +51,7 @@ const App = () => {
     images: [], 
     status: 'live',
     type: 'food-truck', 
-    hasCoupon: true, // Defaulting to true as it's a great feature
+    hasCoupon: true,
     menu: [] 
   });
 
@@ -94,21 +95,25 @@ const App = () => {
     );
   });
 
-  // --- 4. Actions ---
+  // --- 4. Actions & Integrations ---
   const shareToSocial = async (drop, platform) => {
     const shareText = `🔥 10% OFF DEAL: Visit ${drop.title} at ${drop.locationName}! Menu live on PopPop Go.`;
     const shareUrl = `https://poppopnow.com`;
-
     try {
       const clipText = `${shareText} ${shareUrl}`;
       await navigator.clipboard.writeText(clipText);
       if (platform === 'instagram') window.location.href = 'instagram://camera';
-      
-      if (drop.hasCoupon) {
-        setLoyaltyUnlocked(true);
-      }
+      if (drop.hasCoupon) setLoyaltyUnlocked(true);
       alert("Promo text copied! Paste it in your story to use your discount.");
     } catch (err) { console.error(err); }
+  };
+
+  // NEW: Uber Direct Connect
+  const handleUberRide = (drop) => {
+    if (!drop.lat || !drop.lng) return;
+    // Deep link format: https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=LAT&dropoff[longitude]=LNG&dropoff[nickname]=NAME
+    const uberUrl = `https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${drop.lat}&dropoff[longitude]=${drop.lng}&dropoff[nickname]=${encodeURIComponent(drop.title)}`;
+    window.open(uberUrl, '_blank');
   };
 
   const handleAddMenuItem = () => {
@@ -153,7 +158,7 @@ const App = () => {
         filteredDrops.filter(d => d.status === 'live').forEach(drop => {
           if (!drop.lat || !drop.lng) return;
           const marker = window.L.marker([drop.lat, drop.lng]).addTo(map);
-          marker.bindPopup(`<b>${drop.title}</b><br>${drop.hasCoupon ? '🎟 10% OFF' : ''}<br><button onclick="window.dispatchEvent(new CustomEvent('viewShop', {detail: '${drop.id}'}))" style="margin-top:5px; background:#4f46e5; color:white; border:none; padding:5px 10px; border-radius:5px;">OPEN SHOP</button>`);
+          marker.bindPopup(`<b>${drop.title}</b><br>${drop.hasCoupon ? '🎟 10% OFF' : ''}<br><button onclick="window.dispatchEvent(new CustomEvent('viewShop', {detail: '${drop.id}'}))" style="margin-top:5px; background:#4f46e5; color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer;">OPEN SHOP</button>`);
         });
       };
       if (!window.L) {
@@ -176,7 +181,7 @@ const App = () => {
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setDisplayMode(displayMode === 'list' ? 'map' : 'list')} className="w-10 h-10 rounded-2xl flex items-center justify-center border bg-slate-100 border-slate-200">
+          <button onClick={() => setDisplayMode(displayMode === 'list' ? 'map' : 'list')} className="w-10 h-10 rounded-2xl flex items-center justify-center border bg-slate-100 border-slate-200 transition-colors">
             {displayMode === 'list' ? <MapIcon className="w-5 h-5" /> : <Grid className="w-5 h-5" />}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center border border-slate-200 relative">
@@ -196,7 +201,7 @@ const App = () => {
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
                     type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search Trucks, Items, Coupons..."
+                    placeholder="Find Food Trucks, Areas, Coupons..."
                     className="w-full pl-12 pr-12 py-4 bg-white border border-slate-200 rounded-[24px] text-sm font-medium outline-none focus:ring-4 ring-indigo-500/10 transition-all shadow-sm"
                   />
                </div>
@@ -243,29 +248,46 @@ const App = () => {
              
              <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6">
                 <div className="flex justify-between items-center">
-                   <h2 className="text-3xl font-black italic">{selectedDrop.title}</h2>
+                   <h2 className="text-3xl font-black italic tracking-tighter">{selectedDrop.title}</h2>
                    <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN NOW</div>
+                </div>
+
+                {/* Navigation & Uber Actions */}
+                <div className="flex gap-3">
+                   <button 
+                    onClick={() => window.open(`https://maps.google.com/?q=${selectedDrop.lat},${selectedDrop.lng}`)}
+                    className="flex-1 bg-slate-100 p-4 rounded-3xl flex flex-col items-center gap-1 active:bg-slate-200 transition-colors"
+                   >
+                     <Navigation className="w-6 h-6 text-slate-600" />
+                     <span className="text-[10px] font-black uppercase text-slate-500">Maps</span>
+                   </button>
+                   <button 
+                    onClick={() => handleUberRide(selectedDrop)}
+                    className="flex-1 bg-black p-4 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform shadow-xl shadow-slate-200"
+                   >
+                     <Car className="w-6 h-6 text-white" />
+                     <span className="text-[10px] font-black uppercase text-white">Ride Uber</span>
+                   </button>
                 </div>
 
                 {/* Loyalty Promo Section */}
                 {selectedDrop.hasCoupon && (
                   <div className="space-y-3">
                     {!loyaltyUnlocked ? (
-                      <button onClick={() => shareToSocial(selectedDrop, 'instagram')} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex items-center justify-between shadow-xl shadow-pink-100">
+                      <button onClick={() => shareToSocial(selectedDrop, 'instagram')} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex items-center justify-between shadow-xl shadow-pink-100 active:scale-95 transition-transform">
                         <div className="flex items-center gap-3">
                           <Instagram className="w-6 h-6" />
                           <div className="text-left">
-                            <p className="text-[10px] font-black uppercase opacity-80">Pop-up Special</p>
-                            <p className="font-bold text-sm">Share to Story for 10% OFF</p>
+                            <p className="text-[10px] font-black uppercase opacity-80">Story Loyalty</p>
+                            <p className="font-bold text-sm">Share for 10% OFF</p>
                           </div>
                         </div>
                         <Plus className="opacity-50" />
                       </button>
                     ) : (
                       <div className="bg-amber-50 border-2 border-dashed border-amber-200 p-5 rounded-[32px] flex flex-col items-center gap-1 animate-in zoom-in">
-                        <div className="flex items-center gap-2 text-amber-600 mb-1">
-                           <Ticket className="w-4 h-4" />
-                           <p className="text-[10px] font-black uppercase tracking-widest">Coupon Unlocked</p>
+                        <div className="flex items-center gap-2 text-amber-600 mb-1 font-black uppercase text-[10px]">
+                           <Ticket className="w-4 h-4" /> Coupon Unlocked
                         </div>
                         <p className="text-3xl font-black text-amber-900 tracking-tighter">ANTDEAL10</p>
                         <p className="text-[9px] text-amber-500 font-bold">Show this code at the checkout window!</p>
@@ -276,10 +298,10 @@ const App = () => {
 
                 {/* Menu List */}
                 <div className="space-y-3">
-                  <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest flex items-center gap-2"><ShoppingBag className="w-3 h-3" /> Menu & Stock</h3>
+                  <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest flex items-center gap-2"><ShoppingBag className="w-3 h-3" /> Menu & Availability</h3>
                   {selectedDrop.menu?.map((item, idx) => (
                     <div key={idx} className={`flex justify-between items-center p-4 rounded-2xl border ${item.soldOut ? 'bg-slate-50 border-slate-100 opacity-50' : 'bg-white border-slate-200 shadow-sm'}`}>
-                       <p className={`font-bold ${item.soldOut ? 'line-through' : ''}`}>{item.name}</p>
+                       <p className={`font-bold ${item.soldOut ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.name}</p>
                        <div className="flex items-center gap-3">
                          <span className="text-indigo-600 font-black">${item.price}</span>
                          {item.soldOut && <span className="bg-red-100 text-red-500 text-[8px] font-black px-2 py-1 rounded-md">SOLD OUT</span>}
@@ -289,21 +311,21 @@ const App = () => {
                 </div>
 
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
-                   <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase">Direct Memo / Order</div>
+                   <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase">Direct Memo / Message</div>
                    <div className="flex gap-2">
-                      <input value={memoText} onChange={e => setMemoText(e.target.value)} placeholder="Message the merchant..." className="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-none bg-white" />
+                      <input value={memoText} onChange={e => setMemoText(e.target.value)} placeholder="Message the merchant..." className="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-none bg-white font-medium" />
                       <button onClick={async () => {
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'memos'), {
                            text: memoText, merchantId: selectedDrop.merchantId, dropTitle: selectedDrop.title, timestamp: serverTimestamp()
                          });
                          setMemoText(""); alert("Memo sent!");
-                      }} className="bg-indigo-600 text-white p-3 rounded-xl"><Send className="w-4 h-4" /></button>
+                      }} className="bg-indigo-600 text-white p-3 rounded-xl active:scale-90 transition-transform"><Send className="w-4 h-4" /></button>
                    </div>
                 </div>
                 
-                <button onClick={() => setShowPayment(true)} className="w-full bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white shadow-xl">
+                <button onClick={() => setShowPayment(true)} className="w-full bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white shadow-xl hover:bg-black transition-colors">
                    <div className="text-left">
-                     <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">Scan to Pay</p>
+                     <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">Pay Securely</p>
                      <p className="font-bold text-lg">{selectedDrop.zelleId}</p>
                    </div>
                    <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
@@ -327,7 +349,7 @@ const App = () => {
             </div>
 
             <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest">Active Spots</h3>
+              <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest">Active Ant Spots</h3>
               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 space-y-4 shadow-sm">
                   <div className="flex items-center justify-between">
@@ -344,7 +366,7 @@ const App = () => {
                   </div>
                 </div>
               ))}
-              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs">+ DROP NEW SPOT</button>
+              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-transform">+ DROP NEW SPOT</button>
             </div>
           </div>
         )}
@@ -354,7 +376,7 @@ const App = () => {
             <h2 className="text-3xl font-black italic">Go Live</h2>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2">
-                 {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-200"><img src={img} className="w-full h-full object-cover" /></div>))}
+                 {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-200 shadow-inner"><img src={img} className="w-full h-full object-cover" /></div>))}
                  {newDrop.images.length < 5 && (
                    <label className="aspect-square rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 cursor-pointer">
                       {isUploading ? <Loader2 className="animate-spin" /> : <Camera />}
@@ -363,26 +385,26 @@ const App = () => {
                  )}
               </div>
               
-              <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Shop/Truck Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
-              <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Where exactly are you?" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
-              <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle Phone or Email" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
+              <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Shop/Truck Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white focus:ring-2 ring-indigo-500/20" />
+              <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Where exactly are you?" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white focus:ring-2 ring-indigo-500/20" />
+              <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle Phone or Email" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white focus:ring-2 ring-indigo-500/20" />
               
-              <div className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl">
+              <div className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
                  <div className="flex items-center gap-2">
                     <Tag className="w-4 h-4 text-pink-500" />
-                    <span className="text-xs font-black uppercase">Story Share Coupon (10%)</span>
+                    <span className="text-xs font-black uppercase">Enable 10% Off Share Coupon</span>
                  </div>
                  <button type="button" onClick={() => setNewDrop({...newDrop, hasCoupon: !newDrop.hasCoupon})} className={`w-12 h-6 rounded-full transition-colors relative ${newDrop.hasCoupon ? 'bg-pink-500' : 'bg-slate-200'}`}>
                     <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${newDrop.hasCoupon ? 'left-7' : 'left-1'}`}></div>
                  </button>
               </div>
 
-              <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3">
-                 <p className="text-[10px] font-black text-slate-400 uppercase">Build Today's Menu</p>
+              <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Build Today's Menu</p>
                  <div className="flex gap-2">
-                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold" />
-                    <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center" />
-                    <button type="button" onClick={handleAddMenuItem} className="bg-indigo-600 text-white px-3 rounded-xl"><Plus className="w-4 h-4" /></button>
+                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold outline-none" />
+                    <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center outline-none" />
+                    <button type="button" onClick={handleAddMenuItem} className="bg-indigo-600 text-white px-3 rounded-xl active:scale-95"><Plus className="w-4 h-4" /></button>
                  </div>
                  <div className="flex flex-wrap gap-2">
                     {newDrop.menu.map((item, idx) => (
@@ -391,7 +413,7 @@ const App = () => {
                  </div>
               </div>
 
-              <button onClick={handlePostDrop} className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs">Publish to Map</button>
+              <button onClick={handlePostDrop} className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-transform">Publish to Map</button>
             </div>
           </div>
         )}
@@ -400,7 +422,7 @@ const App = () => {
       {/* Nav */}
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white/80 backdrop-blur-xl border border-white/40 shadow-2xl rounded-[32px] py-4 px-10 flex justify-between items-center z-40">
         <button onClick={() => {setView('explore'); setDisplayMode('list');}} className={view === 'explore' && displayMode === 'list' ? 'text-indigo-600' : 'text-slate-300'}><ShoppingBag /></button>
-        <button onClick={() => setView('post')} className="bg-indigo-600 text-white p-5 rounded-[24px] shadow-lg -mt-16 active:scale-90 transition-transform"><Plus className="w-7 h-7" /></button>
+        <button onClick={() => setView('post')} className="bg-indigo-600 text-white p-5 rounded-[24px] shadow-lg shadow-indigo-100 -mt-16 active:scale-90 transition-transform"><Plus className="w-7 h-7" /></button>
         <button onClick={() => setView('merchant-dash')} className={view === 'merchant-dash' ? 'text-indigo-600' : 'text-slate-300'}><User /></button>
       </nav>
 
@@ -414,7 +436,7 @@ const App = () => {
                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=Zelle:${selectedDrop.zelleId}`} className="w-48 h-48 mb-6 rounded-xl shadow-lg" alt="QR" />
                <p className="font-mono font-black text-indigo-600 text-xs tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm">{selectedDrop.zelleId}</p>
             </div>
-            <button onClick={() => setShowPayment(false)} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black uppercase text-xs">Done Paying</button>
+            <button onClick={() => setShowPayment(false)} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black uppercase text-xs active:scale-95">Done Paying</button>
           </div>
         </div>
       )}
