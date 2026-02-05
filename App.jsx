@@ -15,7 +15,7 @@ import {
   Plus, X, Power, Shield, Map as MapIcon, Grid,
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
-  Instagram, Truck, Store, Zap, CheckCircle2, Ticket
+  Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag
 } from 'lucide-react';
 
 // --- Secure Firebase Configuration ---
@@ -39,7 +39,7 @@ const App = () => {
   const [memoText, setMemoText] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   
-  // Food Truck specific states
+  // Loyalty State
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
@@ -50,7 +50,8 @@ const App = () => {
     images: [], 
     status: 'live',
     type: 'food-truck', 
-    menu: [] // Array of { name, price, soldOut }
+    hasCoupon: true, // Defaulting to true as it's a great feature
+    menu: [] 
   });
 
   // --- 1. Authentication ---
@@ -93,35 +94,27 @@ const App = () => {
     );
   });
 
-  // --- 4. Sharing & Loyalty ---
+  // --- 4. Actions ---
   const shareToSocial = async (drop, platform) => {
-    const shareText = `🚚 FIND US NOW: ${drop.title} is at ${drop.locationName}! Menu updated live on PopPop Go.`;
+    const shareText = `🔥 10% OFF DEAL: Visit ${drop.title} at ${drop.locationName}! Menu live on PopPop Go.`;
     const shareUrl = `https://poppopnow.com`;
 
     try {
       const clipText = `${shareText} ${shareUrl}`;
       await navigator.clipboard.writeText(clipText);
       if (platform === 'instagram') window.location.href = 'instagram://camera';
-      if (platform === 'tiktok') window.location.href = 'snssdk1128://';
       
-      // Unlock loyalty code locally for the user
-      setLoyaltyUnlocked(true);
-      alert("Promo text copied! Share it to unlock your 10% discount code.");
+      if (drop.hasCoupon) {
+        setLoyaltyUnlocked(true);
+      }
+      alert("Promo text copied! Paste it in your story to use your discount.");
     } catch (err) { console.error(err); }
   };
 
-  // --- 5. Actions ---
   const handleAddMenuItem = () => {
     if (!menuItemInput.name) return;
     setNewDrop({ ...newDrop, menu: [...newDrop.menu, { ...menuItemInput, soldOut: false }] });
     setMenuItemInput({ name: '', price: '' });
-  };
-
-  const toggleMenuItemStatus = async (dropId, menuIndex) => {
-    const drop = drops.find(d => d.id === dropId);
-    const updatedMenu = [...drop.menu];
-    updatedMenu[menuIndex].soldOut = !updatedMenu[menuIndex].soldOut;
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', dropId), { menu: updatedMenu });
   };
 
   const handlePostDrop = async (e) => {
@@ -131,7 +124,7 @@ const App = () => {
         ...newDrop, merchantId: user.uid, lat: pos.coords.latitude, lng: pos.coords.longitude, createdAt: serverTimestamp(),
       });
       setView('explore');
-      setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'food-truck', menu: [] });
+      setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'food-truck', hasCoupon: true, menu: [] });
     });
   };
 
@@ -149,7 +142,6 @@ const App = () => {
     setIsUploading(false);
   };
 
-  // --- 6. Map Component ---
   const MapView = () => {
     const mapInstance = useRef(null);
     useEffect(() => {
@@ -161,7 +153,7 @@ const App = () => {
         filteredDrops.filter(d => d.status === 'live').forEach(drop => {
           if (!drop.lat || !drop.lng) return;
           const marker = window.L.marker([drop.lat, drop.lng]).addTo(map);
-          marker.bindPopup(`<b>${drop.title}</b><br><button onclick="window.dispatchEvent(new CustomEvent('viewShop', {detail: '${drop.id}'}))" style="margin-top:5px; background:#4f46e5; color:white; border:none; padding:5px 10px; border-radius:5px;">VIEW MENU</button>`);
+          marker.bindPopup(`<b>${drop.title}</b><br>${drop.hasCoupon ? '🎟 10% OFF' : ''}<br><button onclick="window.dispatchEvent(new CustomEvent('viewShop', {detail: '${drop.id}'}))" style="margin-top:5px; background:#4f46e5; color:white; border:none; padding:5px 10px; border-radius:5px;">OPEN SHOP</button>`);
         });
       };
       if (!window.L) {
@@ -180,7 +172,7 @@ const App = () => {
         <div>
           <h1 className="text-2xl font-black tracking-tighter text-indigo-600 italic">PopPop Go</h1>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> {filteredDrops.length} Live Targets
+             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> {filteredDrops.length} Ant Merchants
           </p>
         </div>
         <div className="flex gap-2">
@@ -201,10 +193,10 @@ const App = () => {
           <>
             <div className="p-4 sticky top-0 bg-slate-50/80 backdrop-blur-md z-20">
                <div className="relative group">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
                     type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Find Trucks, Burgers, Coffee..."
+                    placeholder="Search Trucks, Items, Coupons..."
                     className="w-full pl-12 pr-12 py-4 bg-white border border-slate-200 rounded-[24px] text-sm font-medium outline-none focus:ring-4 ring-indigo-500/10 transition-all shadow-sm"
                   />
                </div>
@@ -213,19 +205,24 @@ const App = () => {
             {displayMode === 'list' ? (
               <div className="px-4 space-y-4 pb-32">
                 {filteredDrops.map(drop => (
-                  <div key={drop.id} onClick={() => { setSelectedDrop(drop); setView('shop-detail'); }} className={`bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-all`}>
+                  <div key={drop.id} onClick={() => { setSelectedDrop(drop); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-all">
                     <div className="relative h-64">
                       <img src={drop.images?.[0]} className="w-full h-full object-cover" />
                       <div className="absolute top-4 left-4 flex gap-2">
-                        <div className="bg-amber-500 text-white px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1">
-                          <Truck className="w-3 h-3" /> {drop.type?.toUpperCase()}
+                        <div className="bg-black/60 backdrop-blur-md text-white px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1 uppercase">
+                          {drop.type === 'food-truck' ? <Truck className="w-3 h-3" /> : <Store className="w-3 h-3" />} {drop.type}
                         </div>
+                        {drop.hasCoupon && (
+                          <div className="bg-pink-500 text-white px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1">
+                            <Tag className="w-3 h-3" /> 10% OFF
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="p-5 flex justify-between items-center">
                       <div>
                         <h3 className="font-bold text-lg">{drop.title}</h3>
-                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-1 font-bold"><MapPin className="w-3 h-3 text-red-500" /> {drop.locationName}</p>
+                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-1 font-bold italic"><MapPin className="w-3 h-3 text-red-500" /> {drop.locationName}</p>
                       </div>
                       <ChevronRight className="text-slate-200" />
                     </div>
@@ -247,45 +244,44 @@ const App = () => {
              <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6">
                 <div className="flex justify-between items-center">
                    <h2 className="text-3xl font-black italic">{selectedDrop.title}</h2>
-                   <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black animate-pulse">LIVE NOW</div>
+                   <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN NOW</div>
                 </div>
 
-                {/* Loyalty Promo */}
-                {!loyaltyUnlocked ? (
-                  <button onClick={() => shareToSocial(selectedDrop, 'instagram')} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-4 rounded-3xl text-white flex items-center justify-between shadow-xl shadow-pink-100">
-                    <div className="flex items-center gap-3">
-                       <Instagram className="w-6 h-6" />
-                       <div className="text-left">
-                          <p className="text-[10px] font-black uppercase opacity-80">Story Loyalty</p>
-                          <p className="font-bold text-sm">Share to Story for 10% OFF</p>
-                       </div>
-                    </div>
-                    <ChevronRight className="opacity-50" />
-                  </button>
-                ) : (
-                  <div className="bg-amber-50 border-2 border-dashed border-amber-200 p-4 rounded-3xl flex flex-col items-center gap-1 animate-in zoom-in">
-                     <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Your Discount Code</p>
-                     <p className="text-2xl font-black text-amber-900 tracking-tighter">POPSHARE10</p>
-                     <p className="text-[9px] text-amber-500 font-bold">Show this to the truck window!</p>
+                {/* Loyalty Promo Section */}
+                {selectedDrop.hasCoupon && (
+                  <div className="space-y-3">
+                    {!loyaltyUnlocked ? (
+                      <button onClick={() => shareToSocial(selectedDrop, 'instagram')} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex items-center justify-between shadow-xl shadow-pink-100">
+                        <div className="flex items-center gap-3">
+                          <Instagram className="w-6 h-6" />
+                          <div className="text-left">
+                            <p className="text-[10px] font-black uppercase opacity-80">Pop-up Special</p>
+                            <p className="font-bold text-sm">Share to Story for 10% OFF</p>
+                          </div>
+                        </div>
+                        <Plus className="opacity-50" />
+                      </button>
+                    ) : (
+                      <div className="bg-amber-50 border-2 border-dashed border-amber-200 p-5 rounded-[32px] flex flex-col items-center gap-1 animate-in zoom-in">
+                        <div className="flex items-center gap-2 text-amber-600 mb-1">
+                           <Ticket className="w-4 h-4" />
+                           <p className="text-[10px] font-black uppercase tracking-widest">Coupon Unlocked</p>
+                        </div>
+                        <p className="text-3xl font-black text-amber-900 tracking-tighter">ANTDEAL10</p>
+                        <p className="text-[9px] text-amber-500 font-bold">Show this code at the checkout window!</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {/* Menu List */}
                 <div className="space-y-3">
-                  <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest flex items-center gap-2"><ShoppingBag className="w-3 h-3" /> Current Menu</h3>
+                  <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest flex items-center gap-2"><ShoppingBag className="w-3 h-3" /> Menu & Stock</h3>
                   {selectedDrop.menu?.map((item, idx) => (
-                    <div key={idx} className={`flex justify-between items-center p-4 rounded-2xl border ${item.soldOut ? 'bg-slate-50 border-slate-100 opacity-50' : 'bg-white border-slate-200'}`}>
+                    <div key={idx} className={`flex justify-between items-center p-4 rounded-2xl border ${item.soldOut ? 'bg-slate-50 border-slate-100 opacity-50' : 'bg-white border-slate-200 shadow-sm'}`}>
                        <p className={`font-bold ${item.soldOut ? 'line-through' : ''}`}>{item.name}</p>
                        <div className="flex items-center gap-3">
                          <span className="text-indigo-600 font-black">${item.price}</span>
-                         {!item.soldOut && (
-                           <button 
-                             onClick={() => { setMemoText(`I'd like to order: ${item.name}`); window.scrollTo(0, document.body.scrollHeight); }}
-                             className="bg-indigo-50 text-indigo-600 text-[9px] font-black px-3 py-1 rounded-lg uppercase"
-                           >
-                             Order Ahead
-                           </button>
-                         )}
                          {item.soldOut && <span className="bg-red-100 text-red-500 text-[8px] font-black px-2 py-1 rounded-md">SOLD OUT</span>}
                        </div>
                     </div>
@@ -293,24 +289,24 @@ const App = () => {
                 </div>
 
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
-                   <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase">Pre-Order / Memo</div>
+                   <div className="flex justify-between items-center text-[10px] font-black text-slate-400 uppercase">Direct Memo / Order</div>
                    <div className="flex gap-2">
-                      <input value={memoText} onChange={e => setMemoText(e.target.value)} placeholder="Message the window..." className="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-none bg-white font-medium" />
+                      <input value={memoText} onChange={e => setMemoText(e.target.value)} placeholder="Message the merchant..." className="flex-1 p-3 rounded-xl border border-slate-200 text-sm outline-none bg-white" />
                       <button onClick={async () => {
                          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'memos'), {
                            text: memoText, merchantId: selectedDrop.merchantId, dropTitle: selectedDrop.title, timestamp: serverTimestamp()
                          });
-                         setMemoText(""); alert("Memo sent to truck!");
+                         setMemoText(""); alert("Memo sent!");
                       }} className="bg-indigo-600 text-white p-3 rounded-xl"><Send className="w-4 h-4" /></button>
                    </div>
                 </div>
                 
-                <button onClick={() => setShowPayment(true)} className="w-full bg-indigo-600 p-6 rounded-[32px] flex justify-between items-center text-white shadow-xl shadow-indigo-100">
+                <button onClick={() => setShowPayment(true)} className="w-full bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white shadow-xl">
                    <div className="text-left">
                      <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">Scan to Pay</p>
                      <p className="font-bold text-lg">{selectedDrop.zelleId}</p>
                    </div>
-                   <div className="bg-white/20 p-3 rounded-2xl"><QrCode /></div>
+                   <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
                 </button>
              </div>
           </div>
@@ -331,25 +327,24 @@ const App = () => {
             </div>
 
             <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest">Active Truck Inventory</h3>
+              <h3 className="font-black text-xs uppercase text-slate-400 tracking-widest">Active Spots</h3>
               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 space-y-4 shadow-sm">
-                  <div className="flex items-center gap-4">
-                    <img src={myDrop.images?.[0]} className="w-14 h-14 rounded-2xl object-cover shrink-0" />
-                    <div className="flex-1 min-w-0"><p className="font-black text-lg truncate tracking-tighter">{myDrop.title}</p></div>
-                    <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', myDrop.id))} className="p-3 bg-red-50 text-red-400 rounded-xl"><Trash2 className="w-5 h-5" /></button>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2">
-                    {myDrop.menu?.map((item, mIdx) => (
-                      <button key={mIdx} onClick={() => toggleMenuItemStatus(myDrop.id, mIdx)} className={`flex justify-between items-center px-4 py-3 rounded-xl border text-xs font-bold transition-all ${item.soldOut ? 'bg-red-50 border-red-100 text-red-500' : 'bg-green-50 border-green-100 text-green-600'}`}>
-                        <span>{item.name} (${item.price})</span>
-                        <span>{item.soldOut ? 'SOLD OUT' : 'AVAILABLE'}</span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                       <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover shrink-0" />
+                       <p className="font-black text-lg tracking-tighter">{myDrop.title}</p>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', myDrop.id), { hasCoupon: !myDrop.hasCoupon })} className={`p-3 rounded-xl ${myDrop.hasCoupon ? 'bg-pink-100 text-pink-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Tag className="w-5 h-5" />
                       </button>
-                    ))}
+                      <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', myDrop.id))} className="p-3 bg-red-50 text-red-400 rounded-xl"><Trash2 className="w-5 h-5" /></button>
+                    </div>
                   </div>
                 </div>
               ))}
-              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs">+ DROP NEW TARGET</button>
+              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs">+ DROP NEW SPOT</button>
             </div>
           </div>
         )}
@@ -367,16 +362,27 @@ const App = () => {
                    </label>
                  )}
               </div>
-              <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Truck Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
-              <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Precisely where are you? (Parking Lot B, etc)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
-              <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle Phone or Email" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
               
+              <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Shop/Truck Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
+              <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Where exactly are you?" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
+              <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle Phone or Email" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none bg-white" />
+              
+              <div className="flex items-center justify-between p-4 bg-white border border-slate-100 rounded-2xl">
+                 <div className="flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-pink-500" />
+                    <span className="text-xs font-black uppercase">Story Share Coupon (10%)</span>
+                 </div>
+                 <button type="button" onClick={() => setNewDrop({...newDrop, hasCoupon: !newDrop.hasCoupon})} className={`w-12 h-6 rounded-full transition-colors relative ${newDrop.hasCoupon ? 'bg-pink-500' : 'bg-slate-200'}`}>
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${newDrop.hasCoupon ? 'left-7' : 'left-1'}`}></div>
+                 </button>
+              </div>
+
               <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3">
                  <p className="text-[10px] font-black text-slate-400 uppercase">Build Today's Menu</p>
                  <div className="flex gap-2">
-                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item Name" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold" />
+                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold" />
                     <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center" />
-                    <button onClick={handleAddMenuItem} className="bg-indigo-600 text-white px-3 rounded-xl"><Plus className="w-4 h-4" /></button>
+                    <button type="button" onClick={handleAddMenuItem} className="bg-indigo-600 text-white px-3 rounded-xl"><Plus className="w-4 h-4" /></button>
                  </div>
                  <div className="flex flex-wrap gap-2">
                     {newDrop.menu.map((item, idx) => (
@@ -385,7 +391,7 @@ const App = () => {
                  </div>
               </div>
 
-              <button onClick={handlePostDrop} className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl">PUBLISH TO MAP</button>
+              <button onClick={handlePostDrop} className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs">Publish to Map</button>
             </div>
           </div>
         )}
@@ -402,13 +408,13 @@ const App = () => {
       {showPayment && selectedDrop && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center px-4">
           <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm" onClick={() => setShowPayment(false)}></div>
-          <div className="relative bg-white w-full max-w-sm rounded-t-[50px] p-10 animate-in slide-in-from-bottom">
+          <div className="relative bg-white w-full max-w-sm rounded-t-[50px] p-10 animate-in slide-in-from-bottom shadow-2xl">
             <h3 className="text-2xl font-black text-center mb-8 italic tracking-tighter">ZELLE PAY</h3>
             <div className="bg-slate-50 rounded-[48px] p-10 flex flex-col items-center border border-slate-100 mb-8 shadow-inner">
                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=Zelle:${selectedDrop.zelleId}`} className="w-48 h-48 mb-6 rounded-xl shadow-lg" alt="QR" />
                <p className="font-mono font-black text-indigo-600 text-xs tracking-tighter bg-white px-4 py-2 rounded-xl shadow-sm">{selectedDrop.zelleId}</p>
             </div>
-            <button onClick={() => setShowPayment(false)} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black uppercase text-xs">I've Swiped Payment</button>
+            <button onClick={() => setShowPayment(false)} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black uppercase text-xs">Done Paying</button>
           </div>
         </div>
       )}
