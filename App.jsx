@@ -52,7 +52,7 @@ const APP_PATH = "poppop-go-production";
 const App = () => {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('explore'); 
-  const [displayMode, setDisplayMode] = useState('list'); // 'list' or 'map'
+  const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
   const [memos, setMemos] = useState([]);
   const [selectedDrop, setSelectedDrop] = useState(null);
@@ -68,6 +68,7 @@ const App = () => {
   const [msgInput, setMsgInput] = useState(""); 
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
   const [errorMsg, setErrorMsg] = useState(null);
+  const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
@@ -173,7 +174,6 @@ const App = () => {
   };
 
   const openUber = () => {
-    // Uses the written address for accuracy
     const dest = encodeURIComponent(selectedDrop.locationName);
     const nick = encodeURIComponent(selectedDrop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${dest}&dropoff[nickname]=${nick}`, '_blank');
@@ -182,20 +182,32 @@ const App = () => {
   const shareToSocial = async () => {
     const txt = `Check out ${selectedDrop.title} at ${selectedDrop.locationName}! On PopPop Go.`;
     if (navigator.share) {
-        // Native Phone Share (Works on Android/iPhone)
         navigator.share({
             title: selectedDrop.title,
             text: txt,
             url: window.location.href
         }).catch(console.error);
     } else {
-        // Fallback for PC
         await navigator.clipboard.writeText(txt);
-        alert("Link copied! You can paste it anywhere.");
+        alert("Link copied!");
+    }
+    // Unlock coupon logic locally if drop has one
+    if (selectedDrop.hasCoupon) setLoyaltyUnlocked(true);
+  };
+
+  // Map Handler
+  const handleMapToggle = () => {
+    if (view !== 'explore') {
+      // If in detail view, go back to explore and show map
+      setView('explore');
+      setDisplayMode('map');
+    } else {
+      // Toggle between list and map
+      setDisplayMode(displayMode === 'list' ? 'map' : 'list');
     }
   };
 
-  // Map Component - FIXED VISIBILITY
+  // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
     useEffect(() => {
@@ -211,6 +223,7 @@ const App = () => {
           drops.forEach(d => {
              if (d.lat) {
                  const marker = window.L.marker([d.lat, d.lng]).addTo(map);
+                 marker.bindPopup(`<b>${d.title}</b><br>${d.locationName}`);
                  marker.on('click', () => { setSelectedDrop(d); setView('shop-detail'); });
              }
           });
@@ -218,7 +231,6 @@ const App = () => {
           navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
       };
       
-      // Inject CSS/JS if missing
       if (!window.L) {
          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
          document.head.appendChild(link);
@@ -230,7 +242,6 @@ const App = () => {
       }
     }, [drops]);
     
-    // Explicit Height Fix
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
@@ -245,10 +256,10 @@ const App = () => {
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
         <div className="flex gap-2">
           <button 
-            onClick={() => setDisplayMode(displayMode==='list'?'map':'list')} 
-            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map'?'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
+            onClick={handleMapToggle} 
+            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
           >
-             {displayMode==='list' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
+             {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>{memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>}</button>
         </div>
@@ -290,15 +301,20 @@ const App = () => {
                 <button onClick={openUber} className="flex-1 bg-black text-white p-4 rounded-3xl flex flex-col items-center font-black text-xs"><Car className="w-6 h-6 mb-1"/>UBER</button>
               </div>
 
-              {selectedDrop.hasCoupon && (
-                <button onClick={shareToSocial} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
-                  <div className="flex items-center gap-3"><Share2 className="w-6 h-6"/><div className="text-left font-bold text-sm">Share for 10% OFF</div></div>
-                </button>
-              )}
+              {/* ALWAYS VISIBLE SHARE BUTTON */}
+              <button onClick={shareToSocial} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
+                <div className="flex items-center gap-3">
+                    <Share2 className="w-6 h-6"/>
+                    <div className="text-left font-bold text-sm">
+                        {selectedDrop.hasCoupon ? 'Share for 10% OFF' : 'Share this Spot'}
+                    </div>
+                </div>
+                {selectedDrop.hasCoupon && loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black">ANT10</div> : <Plus className="opacity-50"/>}
+              </button>
 
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
                 <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedDrop.zelleId}</p></div>
-                <div className="bg-white/10 p-3 rounded-2xl shadow-inner"><QrCode /></div>
+                <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
 
               <div className="space-y-2">
@@ -309,7 +325,7 @@ const App = () => {
               <div className="pt-6 border-t border-slate-100 space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Message Merchant</h3>
                  <div className="flex gap-2">
-                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Type a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
+                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Ask a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
                     <button onClick={handleSendMessage} className="bg-black text-white p-3 rounded-xl"><Send className="w-4 h-4"/></button>
                  </div>
               </div>
@@ -326,15 +342,14 @@ const App = () => {
                  {newDrop.images.length < 5 && (
                    <label className="aspect-square rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-200">
                       {isUploading ? <Loader2 className="animate-spin" /> : <Camera className="w-8 h-8" />}
-                      <span className="text-[8px] font-black mt-1 uppercase">{isUploading ? '...' : 'Photo'}</span>
+                      <span className="text-[8px] font-black mt-1 uppercase">{isUploading ? 'Loading...' : 'Take Photo'}</span>
                       <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={isUploading} />
                    </label>
                  )}
               </div>
-              
-              <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl">
-                <button type="button" onClick={() => setNewDrop({...newDrop, type: 'static'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'static' ? 'bg-white shadow' : 'text-slate-400'}`}>POP-UP</button>
-                <button type="button" onClick={() => setNewDrop({...newDrop, type: 'food-truck'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'food-truck' ? 'bg-white shadow' : 'text-slate-400'}`}>TRUCK</button>
+              <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl mb-4">
+                <button type="button" onClick={() => setNewDrop({...newDrop, type: 'static'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'static' ? 'bg-white shadow' : 'text-slate-400'}`}><Store className="w-4 h-4" /> POP-UP</button>
+                <button type="button" onClick={() => setNewDrop({...newDrop, type: 'food-truck'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'food-truck' ? 'bg-white shadow' : 'text-slate-400'}`}><Truck className="w-4 h-4" /> TRUCK</button>
               </div>
 
               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
@@ -347,7 +362,7 @@ const App = () => {
               <div className="space-y-4">
                  <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Store Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
                  <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Full Address (For Uber/Maps)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
-                 <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID (Email/Phone)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
+                 <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID (Email or Phone)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
               </div>
 
               <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm">
@@ -367,8 +382,12 @@ const App = () => {
                  </div>
               </div>
               
-              <button onClick={handlePostDrop} disabled={isUploading || isPosting} className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300">
-                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE'}
+              <button 
+                onClick={handlePostDrop} 
+                disabled={isUploading || isPosting}
+                className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300 shadow-indigo-200"
+              >
+                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE ON MAP'}
               </button>
             </div>
           </div>
@@ -400,7 +419,7 @@ const App = () => {
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash'?'text-indigo-600':'text-slate-300'}><User/></button>
       </nav>
 
-      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://www.zellepay.com`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedDrop.zelleId}</h3><button onClick={()=>setShowPayment(false)} className="bg-black text-white px-8 py-3 rounded-full">Done</button></div></div>}
+      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedDrop.zelleId)}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedDrop.zelleId}</h3><button onClick={()=>setShowPayment(false)} className="bg-black text-white px-8 py-3 rounded-full">Done</button></div></div>}
     </div>
   );
 };
