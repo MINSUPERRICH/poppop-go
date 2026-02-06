@@ -35,9 +35,9 @@ const getFirebaseConfig = () => {
 };
 
 const firebaseConfig = getFirebaseConfig();
-
-// Initialize globally
 let popApp, popAuth, popDb, popStorage;
+
+// Attempt Init
 if (firebaseConfig.apiKey) {
   try {
     popApp = initializeApp(firebaseConfig);
@@ -58,17 +58,13 @@ const App = () => {
   const [selectedDrop, setSelectedDrop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
-  // Upload States
+  // States
   const [isUploading, setIsUploading] = useState(false);
-  const [isPosting, setIsPosting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  
-  // Data States
+  const [statusLog, setStatusLog] = useState("System Ready"); // Debug Log
   const [searchTerm, setSearchTerm] = useState("");
   const [memoText, setMemoText] = useState("");
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
-  const [errorMsg, setErrorMsg] = useState(null);
 
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] 
@@ -76,67 +72,69 @@ const App = () => {
 
   // 1. Auth
   useEffect(() => {
-    if (!popAuth) return;
-    signInAnonymously(popAuth).catch(e => setErrorMsg("Login Error: " + e.message));
-    return onAuthStateChanged(popAuth, setUser);
+    if (!popAuth) {
+      setStatusLog("Auth Error: Firebase not loaded");
+      return;
+    }
+    signInAnonymously(popAuth).catch(e => setStatusLog("Login Failed: " + e.message));
+    return onAuthStateChanged(popAuth, (u) => {
+      setUser(u);
+      if (u) setStatusLog("User Connected: " + u.uid.slice(0,5));
+    });
   }, []);
 
   // 2. Data
   useEffect(() => {
     if (!user || !popDb) return;
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-    const uDrops = onSnapshot(qDrops, 
-      (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') alert("DATABASE LOCKED: Check Firestore Rules!"); }
-    );
+    const uDrops = onSnapshot(qDrops, (s) => {
+       const list = s.docs.map(d => ({id: d.id, ...d.data()}));
+       setDrops(list);
+    }, (e) => setStatusLog("DB Error: " + e.message));
+    
+    // Memos
     const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
-    const uMemos = onSnapshot(qMemos, 
-      (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
-    );
+    const uMemos = onSnapshot(qMemos, (s) => {
+       const list = s.docs.map(d => ({id: d.id, ...d.data()}));
+       setMemos(list.filter(m => m.merchantId === user.uid));
+    });
     return () => { uDrops(); uMemos(); };
   }, [user]);
 
-  // --- DEBUGGED POST FUNCTION ---
+  // --- ACTIONS ---
+
   const handlePostDrop = async () => {
-    // ALERT 1: Button Clicked
-    alert("1. Starting Post...");
+    // 1. Force Alert to prove button works
+    alert(`DEBUG STATUS:\nUser: ${user ? 'Yes' : 'No'}\nPhotos: ${newDrop.images.length}\nUploading: ${isUploading}`);
 
-    if (!popDb || !user) {
-      alert("Error: Database Disconnected. Reloading...");
-      window.location.reload();
-      return;
-    }
+    if (!user) return; // Stop if no user
+
+    // 2. GPS
+    let lat = 40.7128;
+    let lng = -74.0060;
     
-    if (newDrop.images.length === 0) {
-      alert("Error: No photo found. Please take a photo.");
-      return;
-    }
-
-    setIsPosting(true);
-
+    setStatusLog("Requesting GPS...");
+    
     try {
-      let lat = 40.7128; 
-      let lng = -74.0060;
+      // Simple GPS call
+      navigator.geolocation.getCurrentPosition(
+        async (pos) => {
+          setStatusLog("GPS Found. Saving...");
+          await saveToDb(pos.coords.latitude, pos.coords.longitude);
+        }, 
+        async (err) => {
+          alert("GPS Failed (" + err.code + "). Saving with default location.");
+          await saveToDb(lat, lng);
+        },
+        { timeout: 10000 }
+      );
+    } catch (e) {
+      alert("System Error: " + e.message);
+    }
+  };
 
-      // ALERT 2: Trying GPS
-      alert("2. Asking for Location...");
-      
-      try {
-        const pos = await new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
-        });
-        lat = pos.coords.latitude;
-        lng = pos.coords.longitude;
-        // ALERT 3: GPS Success
-        alert("3. Location Found!");
-      } catch (gpsError) {
-        // GPS Fallback
-        alert("GPS Timed Out or Denied. Using default location so you can still post.");
-      }
-
-      // ALERT 4: Saving to DB
-      alert("4. Saving to Database...");
-
+  const saveToDb = async (lat, lng) => {
+    try {
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
         ...newDrop,
         merchantId: user.uid,
@@ -144,39 +142,38 @@ const App = () => {
         lng: lng,
         createdAt: serverTimestamp(),
       });
-
-      // ALERT 5: Success
-      alert("5. SUCCESS! Your spot is live.");
+      alert("SUCCESS! Drop saved.");
       setView('explore');
       setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] });
-
     } catch (err) {
-      console.error(err);
-      alert("CRITICAL ERROR: " + err.message);
-      setErrorMsg(err.message);
-    } finally {
-      setIsPosting(false);
+      alert("SAVE FAILED: " + err.message);
+      setStatusLog("Save Failed: " + err.message);
     }
   };
 
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files);
     if (!popStorage || files.length === 0) return;
+    
     setIsUploading(true);
-    setUploadProgress(1);
+    setStatusLog("Uploading Photo...");
+    
     try {
       for (let file of files) {
         const sRef = ref(popStorage, `artifacts/${APP_PATH}/drops/${Date.now()}_${file.name}`);
         const snap = await uploadBytes(sRef, file);
         const url = await getDownloadURL(snap.ref);
         setNewDrop(prev => ({ ...prev, images: [...prev.images, url].slice(0, 5) }));
-        setUploadProgress(100);
       }
-    } catch (err) { alert("Upload Failed: " + err.message); }
-    finally { setIsUploading(false); setUploadProgress(0); }
+      setStatusLog("Upload Complete!");
+    } catch (err) {
+      alert("Upload Error: " + err.message);
+      setStatusLog("Upload Error");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
-  // Helper Actions
   const handleUberRide = (drop) => window.open(`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${drop.lat}&dropoff[longitude]=${drop.lng}&dropoff[nickname]=${encodeURIComponent(drop.title)}`, '_blank');
   
   const shareToSocial = async (drop, type) => {
@@ -184,7 +181,7 @@ const App = () => {
     await navigator.clipboard.writeText(txt);
     if (type === 'instagram') window.location.href = 'instagram://camera';
     if (drop.hasCoupon) setLoyaltyUnlocked(true);
-    alert("Text copied! Paste in story.");
+    alert("Text copied!");
   };
 
   // Components
@@ -208,8 +205,6 @@ const App = () => {
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans max-w-md mx-auto border-x border-slate-200 relative overflow-hidden text-slate-900">
       
-      {errorMsg && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"><div className="bg-white p-6 rounded-2xl text-center"><p className="text-red-600 font-bold mb-4">{errorMsg}</p><button onClick={()=>setErrorMsg(null)} className="bg-black text-white px-6 py-2 rounded-xl">OK</button></div></div>}
-
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
         <div className="flex gap-2">
@@ -291,22 +286,19 @@ const App = () => {
                  <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Location Hint" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
                  <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
               </div>
-              <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm">
-                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Tag className="w-3 h-3"/> Inventory</p>
-                 <div className="flex gap-2">
-                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold outline-none" />
-                    <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center outline-none" />
-                    <button type="button" onClick={() => { if(menuItemInput.name) { setNewDrop({...newDrop, menu: [...newDrop.menu, {...menuItemInput}]}); setMenuItemInput({name:'', price:''}); } }} className="bg-indigo-600 text-white px-3 rounded-xl"><Plus className="w-4 h-4" /></button>
-                 </div>
-                 <div className="flex flex-wrap gap-2">{newDrop.menu.map((item, idx) => (<span key={idx} className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase">{item.name} ${item.price}</span>))}</div>
-              </div>
               
+              {/* SYSTEM STATUS BOX */}
+              <div className="bg-slate-900 text-white p-4 rounded-xl text-xs font-mono">
+                 <p className="opacity-50 uppercase tracking-widest mb-1">System Status</p>
+                 <p className={statusLog.includes("Error") ? "text-red-400 font-bold" : "text-green-400 font-bold"}>{statusLog}</p>
+                 <p className="mt-1">Photos: {newDrop.images.length} / 5</p>
+              </div>
+
               <button 
                 onClick={handlePostDrop} 
-                disabled={isUploading || isPosting}
-                className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300"
+                className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all"
               >
-                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE ON MAP'}
+                GO LIVE ON MAP
               </button>
             </div>
           </div>
