@@ -124,8 +124,8 @@ const App = () => {
 
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files);
-    if (!storage) {
-      setErrorMsg("Storage not connected. Check Vercel VITE_FIREBASE_STORAGE_BUCKET variable.");
+    if (!storage || !firebaseConfig.storageBucket) {
+      setErrorMsg("CRITICAL: Storage Bucket Variable is Missing. Please check Vercel.");
       return;
     }
     if (files.length === 0) return;
@@ -139,18 +139,17 @@ const App = () => {
         const file = files[i];
         const sRef = ref(storage, `artifacts/${appId}/drops/${Date.now()}_${file.name}`);
         
-        // Use try/catch specifically for the uploadBytes call to catch permission errors
         try {
           const snap = await uploadBytes(sRef, file);
           const downloadUrl = await getDownloadURL(snap.ref);
           urls.push(downloadUrl);
           setUploadProgress(Math.round(((i + 1) / files.length) * 100));
         } catch (uploadErr) {
-          console.error("Storage Error:", uploadErr.code);
+          console.error("Storage Error Code:", uploadErr.code);
           if (uploadErr.code === 'storage/unauthorized') {
-            setErrorMsg("PERMISSION DENIED: Update your Firebase Storage Rules.");
+            setErrorMsg("UPLOAD BLOCKED: Please Publish your Storage Rules in Firebase console.");
           } else {
-            setErrorMsg(`Upload Error: ${uploadErr.code}`);
+            setErrorMsg(`STORAGE ERROR: ${uploadErr.code}. Check bucket name.`);
           }
           setIsUploading(false);
           return;
@@ -158,7 +157,7 @@ const App = () => {
       }
       setNewDrop(prev => ({ ...prev, images: [...prev.images, ...urls].slice(0, 5) }));
     } catch (err) {
-      console.error("General error", err);
+      console.error("General upload failure", err);
     } finally {
       setIsUploading(false);
     }
@@ -167,7 +166,7 @@ const App = () => {
   const handlePostDrop = async (e) => {
     e.preventDefault();
     if (!db || !user || newDrop.images.length === 0) {
-      setErrorMsg("Please add a photo first!");
+      setErrorMsg("Please take at least one photo first!");
       return;
     }
     
@@ -207,12 +206,29 @@ const App = () => {
     return <div id="map-el" className="h-full w-full"></div>;
   };
 
-  if (!firebaseConfig.apiKey) return (
-    <div className="h-screen flex items-center justify-center p-10 text-center bg-slate-900 text-white font-sans">
-      <div className="animate-in fade-in duration-700">
-        <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-6" />
+  // --- CONFIG ERROR UI ---
+  if (!firebaseConfig.apiKey || !firebaseConfig.storageBucket) return (
+    <div className="h-screen flex items-center justify-center p-10 text-center bg-slate-950 text-white font-sans">
+      <div className="space-y-6">
+        <AlertCircle className="w-16 h-16 text-red-500 mx-auto" />
         <h2 className="text-2xl font-black italic tracking-tighter uppercase">Config Error</h2>
-        <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs mx-auto">API Keys are missing in Vercel.</p>
+        <div className="bg-white/5 p-6 rounded-3xl text-left space-y-4 border border-white/10">
+           <div>
+             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">API Key Status</p>
+             <p className={firebaseConfig.apiKey ? 'text-green-400 text-sm font-bold' : 'text-red-400 text-sm font-bold'}>
+               {firebaseConfig.apiKey ? '✅ Found' : '❌ Missing (VITE_FIREBASE_API_KEY)'}
+             </p>
+           </div>
+           <div>
+             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">Storage Bucket Status</p>
+             <p className={firebaseConfig.storageBucket ? 'text-green-400 text-sm font-bold' : 'text-red-400 text-sm font-bold'}>
+               {firebaseConfig.storageBucket ? `✅ Found: ${firebaseConfig.storageBucket}` : '❌ Missing (VITE_FIREBASE_STORAGE_BUCKET)'}
+             </p>
+           </div>
+        </div>
+        <p className="text-slate-400 text-xs leading-relaxed max-w-xs mx-auto italic font-medium">
+          Check your Vercel Dashboard {"->"} Settings {"->"} Environment Variables. If you just added them, click Redeploy.
+        </p>
       </div>
     </div>
   );
@@ -235,11 +251,11 @@ const App = () => {
         <div><h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1></div>
         <div className="flex gap-2">
           <button onClick={() => setDisplayMode(displayMode==='list'?'map':'list')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all shadow-sm">
-            {displayMode==='list'?<MapIcon className="w-5 h-5"/>:<Grid className="w-5 h-5"/>}
+            {displayMode==='list'? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center relative active:scale-90 transition-all shadow-sm">
             <User className="w-5 h-5 text-slate-400"/>
-            {memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
+            {memos.length>0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
         </div>
       </header>
@@ -318,34 +334,14 @@ const App = () => {
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic underline decoration-indigo-200 tracking-tighter">Merchant Hub</h2>
             <div className="space-y-4">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2"><Bell className="w-4 h-4 text-red-500"/> Customer Inbox ({memos.length})</h3>
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2"><Bell className="w-4 h-4 text-red-500"/> Incoming Queue ({memos.length})</h3>
               {memos.length === 0 ? (
-                <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] text-slate-300 text-xs font-medium italic">No questions yet...</div>
+                <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] text-slate-300 text-xs font-medium italic">No messages yet...</div>
               ) : memos.map(m => (
                 <div key={m.id} className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm relative group animate-in slide-in-from-left">
                   <p className="text-[10px] font-black text-indigo-500 uppercase mb-1 tracking-widest truncate w-40">REQ: {m.dropTitle}</p>
                   <p className="text-sm font-semibold text-slate-700 leading-relaxed">"{m.text}"</p>
                   <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'memos', m.id))} className="absolute top-4 right-4 text-slate-200 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Ant Spots</h3>
-              {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
-                <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 space-y-4 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                       <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover shrink-0 shadow-sm" />
-                       <p className="font-black text-lg tracking-tighter">{myDrop.title}</p>
-                    </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', myDrop.id), { hasCoupon: !myDrop.hasCoupon })} className={`p-3 rounded-xl transition-all ${myDrop.hasCoupon ? 'bg-pink-100 text-pink-600' : 'bg-slate-100 text-slate-400'}`}>
-                        <Tag className="w-5 h-5" />
-                      </button>
-                      <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'drops', myDrop.id))} className="p-3 bg-red-50 text-red-400 rounded-xl active:bg-red-100 transition-colors"><Trash2 className="w-5 h-5" /></button>
-                    </div>
-                  </div>
                 </div>
               ))}
               <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-transform">+ DROP NEW SPOT</button>
