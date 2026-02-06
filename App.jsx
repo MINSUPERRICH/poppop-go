@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign
+  Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -36,7 +36,6 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -63,7 +62,6 @@ const App = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   
-  // Data States
   const [searchTerm, setSearchTerm] = useState("");
   const [msgInput, setMsgInput] = useState(""); 
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
@@ -71,10 +69,10 @@ const App = () => {
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
   const [newDrop, setNewDrop] = useState({
-    title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
+    title: '', locationName: '', zelleId: '', zelleQrUrl: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
-  // 1. Auth & Auto-Retry
+  // 1. Auth
   useEffect(() => {
     if (!popAuth) return;
     const tryLogin = async () => {
@@ -86,7 +84,7 @@ const App = () => {
     return onAuthStateChanged(popAuth, setUser);
   }, []);
 
-  // 2. Data Listeners
+  // 2. Data
   useEffect(() => {
     if (!user || !popDb) return;
     
@@ -141,10 +139,10 @@ const App = () => {
         buyerId: user.uid,
         status: 'pending',
         timestamp: serverTimestamp(),
-        details: "Customer reported Zelle payment"
+        details: "Zelle Payment Reported"
       });
       setShowPayment(false);
-      alert("Merchant Notified! They will check their bank app.");
+      alert("Merchant Notified!");
     } catch (e) { alert("Error: " + e.message); }
   };
 
@@ -163,7 +161,7 @@ const App = () => {
 
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
-    if (newDrop.images.length === 0) { alert("Please add a photo."); return; }
+    if (newDrop.images.length === 0) { alert("Please add at least 1 item photo."); return; }
 
     setIsPosting(true);
     try {
@@ -181,14 +179,14 @@ const App = () => {
         createdAt: serverTimestamp(),
       });
 
-      alert("Item Added!");
+      alert("Spot Published!");
       setView('explore');
-      setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
+      setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
   };
 
-  const handleFileChange = async (e) => {
+  const handleFileChange = async (e, type) => {
     const files = Array.from(e.target.files);
     if (!popStorage || files.length === 0) return;
     setIsUploading(true);
@@ -197,19 +195,22 @@ const App = () => {
         const sRef = ref(popStorage, `artifacts/${APP_PATH}/drops/${Date.now()}_${file.name}`);
         const snap = await uploadBytes(sRef, file);
         const url = await getDownloadURL(snap.ref);
-        setNewDrop(prev => ({ ...prev, images: [...prev.images, url].slice(0, 5) }));
+        
+        if (type === 'zelle') {
+           setNewDrop(prev => ({ ...prev, zelleQrUrl: url }));
+        } else {
+           setNewDrop(prev => ({ ...prev, images: [...prev.images, url].slice(0, 5) }));
+        }
       }
     } catch (err) { alert("Upload Failed: " + err.message); }
     finally { setIsUploading(false); }
   };
 
   const openMaps = () => {
-    // FIX: Use Lat/Lng for precision
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
-    // FIX: Use Lat/Lng for pickup/dropoff to be exact
     const nick = encodeURIComponent(selectedShop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
@@ -346,7 +347,7 @@ const App = () => {
               )}
 
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
 
@@ -354,6 +355,14 @@ const App = () => {
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
                  {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
                  {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
+              </div>
+              
+              <div className="pt-6 border-t border-slate-100 space-y-2">
+                 <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Message Merchant</h3>
+                 <div className="flex gap-2">
+                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Type a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
+                    <button onClick={handleSendMessage} className="bg-black text-white p-3 rounded-xl"><Send className="w-4 h-4"/></button>
+                 </div>
               </div>
             </div>
           </div>
@@ -368,11 +377,24 @@ const App = () => {
                  {newDrop.images.length < 5 && (
                    <label className="aspect-square rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-200">
                       {isUploading ? <Loader2 className="animate-spin" /> : <Camera className="w-8 h-8" />}
-                      <span className="text-[8px] font-black mt-1 uppercase">{isUploading ? 'Loading...' : 'Take Photo'}</span>
-                      <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={isUploading} />
+                      <span className="text-[8px] font-black mt-1 uppercase">{isUploading ? 'Loading...' : 'Photo'}</span>
+                      <input type="file" accept="image/*" capture="environment" onChange={(e)=>handleFileChange(e, 'item')} className="hidden" disabled={isUploading} />
                    </label>
                  )}
               </div>
+              
+              <div className="p-4 bg-indigo-50 rounded-2xl border-2 border-dashed border-indigo-200">
+                 <p className="text-[10px] font-black text-indigo-400 uppercase mb-2">Optional: Upload Real Zelle QR</p>
+                 {newDrop.zelleQrUrl ? (
+                   <div className="flex items-center gap-2 text-green-600 font-bold text-xs"><CheckCircle2 className="w-4 h-4" /> QR Uploaded!</div>
+                 ) : (
+                   <label className="flex items-center gap-2 text-indigo-600 font-bold text-xs cursor-pointer">
+                      <ImageIcon className="w-4 h-4" /> Upload from Bank App
+                      <input type="file" accept="image/*" onChange={(e)=>handleFileChange(e, 'zelle')} className="hidden" />
+                   </label>
+                 )}
+              </div>
+
               <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl mb-4">
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'static'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'static' ? 'bg-white shadow' : 'text-slate-400'}`}><Store className="w-4 h-4" /> POP-UP</button>
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'food-truck'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'food-truck' ? 'bg-white shadow' : 'text-slate-400'}`}><Truck className="w-4 h-4" /> TRUCK</button>
@@ -455,6 +477,13 @@ const App = () => {
                ))}
                <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
             </div>
+            
+            <div className="space-y-4 pt-6 border-t border-slate-100">
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
+              {memos.length === 0 ? <div className="text-center text-slate-300 italic text-sm">No messages.</div> : memos.map(m => (
+                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
+              ))}
+            </div>
           </div>
         )}
       </main>
@@ -471,14 +500,20 @@ const App = () => {
             <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <DollarSign className="w-8 h-8 text-indigo-600" />
             </div>
-            <h3 className="text-2xl font-black text-slate-900 mb-2">Payment Details</h3>
-            <p className="text-sm text-slate-500 mb-6 px-4">Open your Zelle or Banking App and send <b>total amount</b> to:</p>
+            <h3 className="text-2xl font-black text-slate-900 mb-2">Scan to Pay</h3>
             
+            {/* NEW: SHOW REAL UPLOADED QR IF EXISTS */}
+            {selectedShop?.zelleQrUrl ? (
+               <img src={selectedShop.zelleQrUrl} className="w-48 h-48 mx-auto mb-4 rounded-lg shadow-md border-2 border-slate-100" />
+            ) : (
+               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl opacity-50" />
+            )}
+
             <div onClick={() => { navigator.clipboard.writeText(selectedShop.zelleId); alert("ID Copied!"); }} className="bg-slate-100 p-4 rounded-2xl border border-slate-200 mb-2 flex items-center justify-between cursor-pointer active:bg-slate-200">
               <span className="font-black text-lg text-indigo-600 truncate">{selectedShop?.zelleId}</span>
               <span className="text-xs font-bold text-slate-400 bg-white px-2 py-1 rounded-md shadow-sm">COPY</span>
             </div>
-            <p className="text-[10px] text-slate-400 mb-6 italic">Tap above to copy ID</p>
+            <p className="text-[10px] text-slate-400 mb-6 italic">If scan fails, copy ID above.</p>
 
             <button onClick={handlePaymentNotify} className="w-full bg-green-500 text-white py-4 rounded-2xl font-black text-sm shadow-lg shadow-green-200 active:scale-95 transition-transform">NOTIFY MERCHANT I'VE PAID</button>
             <button onClick={() => setShowPayment(false)} className="mt-4 text-slate-400 text-xs font-bold w-full py-2">Cancel</button>
