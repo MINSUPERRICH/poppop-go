@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera, Check, Info, Home, DollarSign, Clock
+  Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -54,7 +54,7 @@ const App = () => {
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
-  const [orders, setOrders] = useState([]); // New Order State
+  const [orders, setOrders] = useState([]); 
   const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
@@ -94,13 +94,13 @@ const App = () => {
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: You can only edit your own items."); }
+      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Orders (Replacing Memos for clearer business logic)
+    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
-      (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)))
+      (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
     );
     return () => { uDrops(); uOrders(); };
   }, [user]);
@@ -125,7 +125,6 @@ const App = () => {
     });
     return Object.values(groups);
   };
-
   const uniqueShops = getUniqueShops();
   const filteredShops = uniqueShops.filter(shop => {
     const term = searchTerm.toLowerCase();
@@ -134,32 +133,34 @@ const App = () => {
 
   // --- ACTIONS ---
 
-  // 1. Submit Order (Buyer)
-  const handlePaymentSent = async () => {
+  const handlePaymentNotify = async () => {
     try {
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'), {
         merchantId: selectedShop.merchantId,
         shopTitle: selectedShop.title,
         buyerId: user.uid,
-        status: 'pending', // pending -> verified
+        status: 'pending',
         timestamp: serverTimestamp(),
-        details: "Zelle Payment Sent"
+        details: "Customer reported Zelle payment"
       });
       setShowPayment(false);
-      alert("Merchant notified! Wait for them to confirm.");
+      alert("Merchant Notified! They will check their bank app.");
     } catch (e) { alert("Error: " + e.message); }
   };
 
-  // 2. Verify Order (Merchant)
   const handleVerifyOrder = async (orderId) => {
     try {
-      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), {
-        status: 'verified'
-      });
-    } catch (e) { alert("Permission Denied: You can only verify orders for your shop."); }
+      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), { status: 'verified' });
+    } catch (e) { alert("Only the merchant can verify this."); }
   };
 
-  // 3. Post Drop
+  const deleteItemFromShop = async (dropId, itemIndex) => {
+    const drop = drops.find(d => d.id === dropId);
+    if (!drop) return;
+    const newMenu = drop.menu.filter((_, i) => i !== itemIndex);
+    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
+  };
+
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add a photo."); return; }
@@ -167,7 +168,6 @@ const App = () => {
     setIsPosting(true);
     try {
       let lat = 40.7128; let lng = -74.0060; 
-      
       try {
         const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
         lat = pos.coords.latitude;
@@ -181,7 +181,7 @@ const App = () => {
         createdAt: serverTimestamp(),
       });
 
-      alert("Item Added to Shop!");
+      alert("Item Added!");
       setView('explore');
       setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
@@ -204,24 +204,20 @@ const App = () => {
   };
 
   const openMaps = () => {
-    const query = encodeURIComponent(selectedShop.locationName);
-    window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
+    // FIX: Use Lat/Lng for precision
+    window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
-    const dest = encodeURIComponent(selectedShop.locationName);
+    // FIX: Use Lat/Lng for pickup/dropoff to be exact
     const nick = encodeURIComponent(selectedShop.title);
-    window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${dest}&dropoff[nickname]=${nick}`, '_blank');
+    window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
 
   const shareToSocial = async () => {
     const txt = `Check out ${selectedShop.title} at ${selectedShop.locationName}! On PopPop Go.`;
     if (navigator.share) {
-        navigator.share({
-            title: selectedShop.title,
-            text: txt,
-            url: window.location.href
-        }).catch(console.error);
+        navigator.share({ title: selectedShop.title, text: txt, url: window.location.href }).catch(console.error);
     } else {
         await navigator.clipboard.writeText(txt);
         alert("Link copied!");
@@ -265,9 +261,7 @@ const App = () => {
          const script = document.createElement('script'); script.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
          script.onload = loadMap;
          document.head.appendChild(script);
-      } else {
-         loadMap();
-      }
+      } else { loadMap(); }
     }, [filteredShops]);
     
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
@@ -285,11 +279,8 @@ const App = () => {
         <div className="flex gap-2">
           <button 
             onClick={() => {
-               if (view === 'explore' && displayMode === 'list') {
-                  setDisplayMode('map');
-               } else {
-                  goHome(); 
-               }
+               if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } 
+               else { goHome(); }
             }} 
             className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
           >
@@ -424,11 +415,9 @@ const App = () => {
         {view === 'merchant-dash' && (
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2>
-            
-            {/* NEW: ORDERS SECTION */}
             <div className="space-y-4">
-               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Customer Payments</h3>
-               {orders.filter(o => o.merchantId === user?.uid).length === 0 ? <div className="text-center text-slate-300 italic text-sm">No new orders</div> : 
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Customer Payments</h3>
+              {orders.filter(o => o.merchantId === user?.uid).length === 0 ? <div className="text-center text-slate-300 italic text-sm">No new orders</div> : 
                  orders.filter(o => o.merchantId === user?.uid).map(order => (
                     <div key={order.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
                        <div className="flex justify-between items-center mb-2">
@@ -436,31 +425,35 @@ const App = () => {
                           <span className={`text-[10px] px-2 py-1 rounded-full font-black ${order.status === 'verified' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>{order.status.toUpperCase()}</span>
                        </div>
                        <p className="text-xs text-slate-500 mb-3">{order.details}</p>
-                       {order.status !== 'verified' && (
-                         <div className="flex gap-2">
-                            <button className="flex-1 bg-green-500 text-white py-2 rounded-xl text-xs font-bold" onClick={() => handleVerifyOrder(order.id)}>Confirm Received</button>
-                         </div>
-                       )}
+                       {order.status !== 'verified' && <button className="w-full bg-green-500 text-white py-2 rounded-xl text-xs font-bold" onClick={() => handleVerifyOrder(order.id)}>Confirm Received</button>}
                     </div>
                  ))
-               }
+              }
             </div>
 
             <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
-              {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
-                <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between">
-                  <div className="flex gap-3 items-center">
-                    <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover" />
-                    <div>
-                      <span className="font-bold block text-sm">{myDrop.title}</span>
-                      <span className="text-[10px] text-slate-400">1 Item Added</span>
-                    </div>
-                  </div>
-                  <button className="p-4 bg-red-50 text-red-400 rounded-2xl active:bg-red-100" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}><Trash2 className="w-5 h-5"/></button>
-                </div>
-              ))}
-              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
+               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
+               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
+                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm">
+                   <div className="flex gap-3 items-center mb-3">
+                     <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover" />
+                     <div className="flex-1">
+                       <span className="font-bold block text-sm">{myDrop.title}</span>
+                       <button className="text-red-400 text-xs font-bold" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}>Delete Spot</button>
+                     </div>
+                   </div>
+                   {/* Item Delete List */}
+                   <div className="space-y-1">
+                     {myDrop.menu?.map((item, idx) => (
+                       <div key={idx} className="flex justify-between items-center text-xs p-2 bg-slate-50 rounded-lg">
+                         <span>{item.name}</span>
+                         <X className="w-4 h-4 text-slate-300 cursor-pointer" onClick={() => deleteItemFromShop(myDrop.id, idx)} />
+                       </div>
+                     ))}
+                   </div>
+                 </div>
+               ))}
+               <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
             </div>
           </div>
         )}
@@ -472,7 +465,26 @@ const App = () => {
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash'?'text-indigo-600':'text-slate-300'}><User/></button>
       </nav>
 
-      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedShop?.zelleId}</h3><p className="text-slate-400 text-xs mb-6">Check your banking app to send money.</p><button onClick={handlePaymentSent} className="bg-green-500 text-white px-8 py-3 rounded-full font-bold shadow-lg">I Sent Payment</button></div></div>}
+      {showPayment && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-8">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 text-center shadow-2xl animate-in zoom-in">
+            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <DollarSign className="w-8 h-8 text-indigo-600" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-2">Payment Details</h3>
+            <p className="text-sm text-slate-500 mb-6 px-4">Open your Zelle or Banking App and send <b>total amount</b> to:</p>
+            
+            <div onClick={() => { navigator.clipboard.writeText(selectedShop.zelleId); alert("ID Copied!"); }} className="bg-slate-100 p-4 rounded-2xl border border-slate-200 mb-2 flex items-center justify-between cursor-pointer active:bg-slate-200">
+              <span className="font-black text-lg text-indigo-600 truncate">{selectedShop?.zelleId}</span>
+              <span className="text-xs font-bold text-slate-400 bg-white px-2 py-1 rounded-md shadow-sm">COPY</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mb-6 italic">Tap above to copy ID</p>
+
+            <button onClick={handlePaymentNotify} className="w-full bg-green-500 text-white py-4 rounded-2xl font-black text-sm shadow-lg shadow-green-200 active:scale-95 transition-transform">NOTIFY MERCHANT I'VE PAID</button>
+            <button onClick={() => setShowPayment(false)} className="mt-4 text-slate-400 text-xs font-bold w-full py-2">Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
