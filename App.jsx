@@ -19,7 +19,7 @@ import {
   Car, AlertCircle, Camera, Check, Info
 } from 'lucide-react';
 
-// --- PRODUCTION CONFIGURATION ---
+// --- CONFIGURATION ---
 const getFirebaseConfig = () => {
   if (typeof __firebase_config !== 'undefined') {
     try { return JSON.parse(__firebase_config); } catch (e) { }
@@ -94,19 +94,13 @@ const App = () => {
   // 2. Data Sync
   useEffect(() => {
     if (!user || !popDb) return;
-    
-    // Subscribe to Drops
     const dropsQ = query(collection(popDb, 'artifacts', APP_PATH_ID, 'public', 'data', 'drops'));
     const unsubDrops = onSnapshot(dropsQ, (snap) => {
       setDrops(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
     }, (err) => {
-      // Catch PERMISSION DENIED here
-      if (err.code === 'permission-denied') {
-        setErrorMsg("DATABASE LOCKED: Please update your Firestore Rules in Firebase Console to allow write access.");
-      }
+      if (err.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Update your Firestore Rules in Firebase Console.");
     });
     
-    // Subscribe to Memos
     const memosQ = query(collection(popDb, 'artifacts', APP_PATH_ID, 'public', 'data', 'memos'));
     const unsubMemos = onSnapshot(memosQ, (snap) => {
       setMemos(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.merchantId === user.uid));
@@ -136,7 +130,7 @@ const App = () => {
         setUploadProgress(100);
       }
     } catch (err) {
-      setErrorMsg(`Photo Upload Failed: ${err.message}. Check Storage Rules.`);
+      setErrorMsg(`Photo Upload Failed: ${err.message}`);
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -145,50 +139,58 @@ const App = () => {
 
   const handlePostDrop = async (e) => {
     e.preventDefault();
+    // 1. Debug Alert
+    alert("Starting publish process..."); 
+    
     if (!popDb || !user) {
-      setErrorMsg("Connection lost. Please refresh the app.");
-      return;
-    }
-    if (isUploading) {
-      setErrorMsg("Please wait for your photo to finish uploading.");
+      alert("Database not connected. Reloading...");
+      window.location.reload();
       return;
     }
     if (newDrop.images.length === 0) {
-      setErrorMsg("You must take a photo first!");
+      alert("Please upload a photo first.");
       return;
     }
 
     setIsPosting(true);
 
-    // Promise wrapper for GPS with 10-second timeout
-    const getCoordinates = () => new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(resolve, reject, { 
-        enableHighAccuracy: true, 
-        timeout: 10000 
-      });
-    });
-
     try {
-      const position = await getCoordinates();
+      // 2. GPS Step
+      let lat = 40.7128; // Default Fallback (NYC)
+      let lng = -74.0060;
       
+      try {
+         const position = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 });
+         });
+         lat = position.coords.latitude;
+         lng = position.coords.longitude;
+         alert("GPS Location Found!"); 
+      } catch (gpsErr) {
+         alert("GPS Failed/Timed out. Using default location.");
+         console.warn("GPS Fail", gpsErr);
+      }
+      
+      // 3. Save Step
+      alert("Saving to Database...");
       await addDoc(collection(popDb, 'artifacts', APP_PATH_ID, 'public', 'data', 'drops'), {
         ...newDrop,
         merchantId: user.uid,
-        lat: position.coords.latitude,
-        lng: position.coords.longitude,
+        lat: lat,
+        lng: lng,
         createdAt: serverTimestamp(),
       });
       
+      alert("Success! Spot is Live.");
       setView('explore');
       setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] });
-      alert("SPOT PUBLISHED!");
+
     } catch (err) {
-      console.error("Post Error:", err);
-      // Detailed Error Reporting
-      if (err.code === 1) setErrorMsg("GPS DENIED: Please enable Location Services in your phone settings.");
-      else if (err.code === 3) setErrorMsg("GPS TIMEOUT: Move to a window or outside to get a better signal.");
-      else if (err.code === 'permission-denied') setErrorMsg("DATABASE ERROR: Permission Denied. Your Firestore Rules are blocking the save.");
-      else setErrorMsg(`Failed: ${err.message || "Unknown Error"}`);
+      console.error("Critical Post Error:", err);
+      alert(`FAILED: ${err.message}`);
+      if (err.code === 'permission-denied') {
+         setErrorMsg("DATABASE PERMISSION DENIED. Check Rules.");
+      }
     } finally {
       setIsPosting(false);
     }
@@ -227,25 +229,23 @@ const App = () => {
 
   if (!firebaseConfig.apiKey) return (
     <div className="h-screen flex items-center justify-center p-10 bg-slate-900 text-white text-center font-sans">
-       <div><AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4"/><h2 className="text-xl font-black uppercase tracking-tighter">Keys Not Found</h2><p className="text-slate-400 text-sm mt-2 font-medium italic leading-relaxed">Please ensure you added VITE_FIREBASE_API_KEY to your Vercel Environment Variables.</p></div>
+       <div><AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4"/><h2 className="text-xl font-bold">API KEY MISSING</h2><p className="text-slate-400 text-sm mt-2">Check Vercel Env Variables.</p></div>
     </div>
   );
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans max-w-md mx-auto border-x border-slate-200 relative overflow-hidden text-slate-900">
       
-      {/* ERROR OVERLAY */}
       {errorMsg && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in">
            <div className="bg-white p-8 rounded-[32px] shadow-2xl text-center space-y-4 max-w-xs border-2 border-red-50">
               <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
-              <p className="font-bold text-slate-800 leading-tight tracking-tight">{errorMsg}</p>
+              <p className="font-bold text-slate-800 leading-tight">{errorMsg}</p>
               <button onClick={() => setErrorMsg(null)} className="w-full bg-slate-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-xl">Dismiss</button>
            </div>
         </div>
       )}
 
-      {/* HEADER */}
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center shadow-sm">
         <div><h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1></div>
         <div className="flex gap-2">
@@ -301,13 +301,13 @@ const App = () => {
                 <button onClick={() => handleUberRide(selectedDrop)} className="flex-1 bg-black p-4 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform shadow-xl shadow-slate-200 text-white font-black"><Car className="w-6 h-6 text-white"/><span className="uppercase text-[10px]">Ride Uber</span></button>
               </div>
               <div className="space-y-2">
-                <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2 px-1 italic font-black"><ShoppingBag className="w-3 h-3" /> Merchant Inventory</h3>
+                <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2 px-1 italic font-black"><ShoppingBag className="w-3 h-3" /> Merchant Menu</h3>
                 {selectedDrop.menu?.map((m, i) => (
                   <div key={i} className="flex justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm animate-in fade-in duration-300 font-bold"><span className="text-slate-700">{m.name}</span><span className="text-indigo-600 tracking-tighter">${m.price}</span></div>
                 ))}
               </div>
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black transition-colors shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic font-black underline decoration-indigo-400">Scan to Pay</p><p className="font-bold text-lg tracking-tight underline decoration-indigo-400">{selectedDrop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic font-black underline decoration-indigo-400">Scan to Pay Merchant</p><p className="font-bold text-lg tracking-tight underline decoration-indigo-400">{selectedDrop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl shadow-inner"><QrCode /></div>
               </div>
             </div>
@@ -342,7 +342,7 @@ const App = () => {
                  {newDrop.images.length < 5 && (
                    <label className="aspect-square rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 cursor-pointer relative hover:border-indigo-300 hover:text-indigo-400 transition-all">
                       {isUploading ? <Loader2 className="animate-spin text-indigo-600" /> : <Camera className="w-8 h-8" />}
-                      <span className="text-[8px] font-black mt-1 uppercase tracking-tighter font-black">{isUploading ? 'WAIT...' : 'Take Photo'}</span>
+                      <span className="text-[8px] font-black mt-1 uppercase tracking-tighter font-black">{isUploading ? 'Uploading...' : 'Take Photo'}</span>
                       <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={isUploading} />
                    </label>
                  )}
@@ -359,8 +359,8 @@ const App = () => {
               <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm border-indigo-50">
                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 font-black"><Tag className="w-3 h-3"/> Quick Menu</p>
                  <div className="flex gap-2">
-                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold outline-none shadow-inner bg-slate-50" />
-                    <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center outline-none shadow-inner bg-slate-50" />
+                    <input value={menuItemInput.name} onChange={e=>setMenuItemInput({...menuItemInput, name: e.target.value})} placeholder="Item" className="flex-1 p-3 rounded-xl border border-slate-100 text-xs font-bold outline-none shadow-inner" />
+                    <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center outline-none shadow-inner" />
                     <button type="button" onClick={() => { if(menuItemInput.name) { setNewDrop({...newDrop, menu: [...newDrop.menu, {...menuItemInput}]}); setMenuItemInput({name:'', price:''}); } }} className="bg-indigo-600 text-white px-3 rounded-xl active:scale-95 transition-all shadow-lg"><Plus className="w-4 h-4" /></button>
                  </div>
                  <div className="flex flex-wrap gap-2">
@@ -374,14 +374,14 @@ const App = () => {
                 disabled={isUploading || isPosting}
                 className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300 shadow-indigo-200"
               >
-                {isPosting ? 'Connecting to GPS...' : isUploading ? 'Uploading Photos...' : 'Go Live on Map'}
+                {isPosting ? 'Connecting to GPS...' : isUploading ? 'Wait for photo...' : 'Go Live on Map'}
               </button>
             </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white/80 backdrop-blur-xl border border-white/40 shadow-2xl rounded-[32px] py-4 px-10 flex justify-between items-center z-40 shadow-indigo-500/10 transition-all">
+      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white/80 backdrop-blur-xl border border-white/40 shadow-2xl rounded-[32px] py-4 px-10 flex justify-between items-center z-40 shadow-indigo-500/10">
         <button onClick={() => {setView('explore'); setDisplayMode('list');}} className={view==='explore' ? 'text-indigo-600 font-black' : 'text-slate-300 transition-colors'}><ShoppingBag/></button>
         <button onClick={() => setView('post')} className="bg-indigo-600 text-white p-5 rounded-[24px] shadow-lg shadow-indigo-200 -mt-16 active:scale-90 transition-transform"><Plus className="w-7 h-7"/></button>
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash' ? 'text-indigo-600 font-black' : 'text-slate-300 transition-colors'}><User/></button>
