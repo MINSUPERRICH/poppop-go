@@ -21,20 +21,21 @@ import {
 
 // --- ROBUST CONFIGURATION LOADER ---
 const getFirebaseConfig = () => {
+  // 1. Check for Preview/Canvas Environment config
   if (typeof __firebase_config !== 'undefined') {
     try { return JSON.parse(__firebase_config); } catch (e) { }
   }
 
+  // 2. Production Environment (Vercel/Vite)
   try {
-    // Production system for Vercel / Vite
-    const env = import.meta.env;
+    // Standard Vite environment variable access
     return {
-      apiKey: env.VITE_FIREBASE_API_KEY,
-      authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: env.VITE_FIREBASE_APP_ID
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID
     };
   } catch (e) {
     return {};
@@ -43,7 +44,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Safe initialization
+// Shadow-safe global variables to prevent initialization crashes
 let fbApp, fbAuth, fbDb, fbStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -78,7 +79,7 @@ const App = () => {
     title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] 
   });
 
-  // 1. Authentication
+  // 1. Auth Sync
   useEffect(() => {
     if (!fbAuth) return;
     const initAuth = async () => {
@@ -95,21 +96,18 @@ const App = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. Real-time Listeners
+  // 2. Real-time Data Sync
   useEffect(() => {
     if (!user || !fbDb) return;
     const dropsQ = query(collection(fbDb, 'artifacts', APP_ID_PATH, 'public', 'data', 'drops'));
     const unsubDrops = onSnapshot(dropsQ, (snap) => {
       setDrops(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
-    }, (err) => {
-       console.error("Firestore sync error", err);
-       setErrorMsg("Database connection issues. Check your Internet.");
-    });
+    }, (err) => console.error("Drops error", err));
     
     const memosQ = query(collection(fbDb, 'artifacts', APP_ID_PATH, 'public', 'data', 'memos'));
     const unsubMemos = onSnapshot(memosQ, (snap) => {
       setMemos(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.merchantId === user.uid));
-    });
+    }, (err) => console.error("Memos error", err));
     
     return () => { unsubDrops(); unsubMemos(); };
   }, [user]);
@@ -121,22 +119,31 @@ const App = () => {
     window.open(url, '_blank');
   };
 
+  const shareToSocial = async (drop, platform) => {
+    const text = `🔥 DEAL: Visit ${drop.title} at ${drop.locationName}! Menu live on PopPop Go. https://poppopnow.com`;
+    try {
+      await navigator.clipboard.writeText(text);
+      if (platform === 'instagram') window.location.href = 'instagram://camera';
+      if (drop.hasCoupon) setLoyaltyUnlocked(true);
+      alert("Promo text copied! Share it to unlock your code.");
+    } catch (err) { console.error(err); }
+  };
+
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files);
     if (!fbStorage) {
-      setErrorMsg("STORAGE NOT READY: Check Vercel for VITE_FIREBASE_STORAGE_BUCKET.");
+      setErrorMsg("Storage not connected. Please check Vercel Environment Variables.");
       return;
     }
     if (files.length === 0) return;
     
     setIsUploading(true);
-    setUploadProgress(1); // Start at 1 to show activity
+    setUploadProgress(0);
     const urls = [];
     
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        // Path MUST exactly match rule in Screenshot 912
         const sRef = ref(fbStorage, `artifacts/${APP_ID_PATH}/drops/${Date.now()}_${file.name}`);
         
         try {
@@ -145,12 +152,10 @@ const App = () => {
           urls.push(downloadUrl);
           setUploadProgress(Math.round(((i + 1) / files.length) * 100));
         } catch (uploadErr) {
-          console.error("Storage Error:", uploadErr.code);
-          if (uploadErr.code === 'storage/unauthorized') {
-             setErrorMsg("Firebase blocked the photo. Make sure you clicked PUBLISH on your Storage Rules.");
-          } else {
-             setErrorMsg(`Upload failed: ${uploadErr.code}`);
-          }
+          console.error("Storage code:", uploadErr.code);
+          setErrorMsg(uploadErr.code === 'storage/unauthorized' 
+            ? "PERMISSION DENIED: You must check your Firebase Storage Rules." 
+            : `Storage Error: ${uploadErr.code}`);
           setIsUploading(false);
           return;
         }
@@ -163,7 +168,7 @@ const App = () => {
   const handlePostDrop = async (e) => {
     e.preventDefault();
     if (!fbDb || !user || newDrop.images.length === 0) {
-      setErrorMsg("Please take at least one photo before going live.");
+      setErrorMsg("Please take a photo before posting!");
       return;
     }
     
@@ -178,8 +183,8 @@ const App = () => {
         });
         setView('explore');
         setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] });
-      } catch (err) { setErrorMsg(`Post Error: ${err.message}`); }
-    }, () => setErrorMsg("PopPop needs GPS to show your location to buyers. Please allow location."));
+      } catch (err) { setErrorMsg(`Database error: ${err.message}`); }
+    }, () => setErrorMsg("Please enable GPS to Drop a Spot!"));
   };
 
   const filteredDrops = drops.filter(d => 
@@ -203,30 +208,29 @@ const App = () => {
     return <div id="map-el" className="h-full w-full"></div>;
   };
 
-  // --- CRITICAL ERROR SCREEN ---
+  // --- CONFIG ERROR UI ---
   if (!firebaseConfig.apiKey || !firebaseConfig.storageBucket) return (
-    <div className="h-screen flex items-center justify-center p-10 text-center bg-slate-900 text-white font-sans overflow-hidden">
+    <div className="h-screen flex items-center justify-center p-10 text-center bg-slate-950 text-white font-sans">
       <div className="space-y-6">
         <AlertCircle className="w-16 h-16 text-red-500 mx-auto" />
-        <h2 className="text-2xl font-black italic tracking-tighter uppercase">Config Incomplete</h2>
+        <h2 className="text-2xl font-black italic tracking-tighter uppercase">Config Error</h2>
         <div className="bg-white/5 p-6 rounded-3xl text-left space-y-4 border border-white/10">
            <div>
-             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">Database Key</p>
+             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">API Key Status</p>
              <p className={firebaseConfig.apiKey ? 'text-green-400 text-sm font-bold' : 'text-red-400 text-sm font-bold'}>
-               {firebaseConfig.apiKey ? '✅ Loaded' : '❌ Missing (VITE_FIREBASE_API_KEY)'}
+               {firebaseConfig.apiKey ? '✅ Found' : '❌ Missing (VITE_FIREBASE_API_KEY)'}
              </p>
            </div>
            <div>
-             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">Photo Storage Bucket</p>
+             <p className="text-[10px] font-black uppercase text-slate-500 mb-1 tracking-widest">Storage Bucket Status</p>
              <p className={firebaseConfig.storageBucket ? 'text-green-400 text-sm font-bold' : 'text-red-400 text-sm font-bold'}>
-               {firebaseConfig.storageBucket ? `✅ Loaded: ${firebaseConfig.storageBucket}` : '❌ Missing (VITE_FIREBASE_STORAGE_BUCKET)'}
+               {firebaseConfig.storageBucket ? `✅ Found: ${firebaseConfig.storageBucket}` : '❌ Missing (VITE_FIREBASE_STORAGE_BUCKET)'}
              </p>
            </div>
         </div>
         <p className="text-slate-400 text-xs leading-relaxed max-w-xs mx-auto italic font-medium">
-          Check Vercel Dashboard {">"} Settings {">"} Environment Variables. Make sure you used VITE_ prefix.
+          Check Vercel Dashboard Settings for Environment Variables. Then click Redeploy.
         </p>
-        <button onClick={() => window.location.reload()} className="px-8 py-3 bg-indigo-600 rounded-full font-black text-xs uppercase tracking-widest">Try Re-Sync</button>
       </div>
     </div>
   );
@@ -236,11 +240,11 @@ const App = () => {
       
       {/* ERROR MODAL */}
       {errorMsg && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in">
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
            <div className="bg-white p-8 rounded-[32px] shadow-2xl text-center space-y-4 max-w-xs border-2 border-red-50">
               <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
               <p className="font-bold text-slate-800 leading-tight">{errorMsg}</p>
-              <button onClick={() => setErrorMsg(null)} className="w-full bg-slate-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all">Dismiss</button>
+              <button onClick={() => setErrorMsg(null)} className="w-full bg-slate-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest">Close</button>
            </div>
         </div>
       )}
@@ -249,10 +253,10 @@ const App = () => {
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <div><h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1></div>
         <div className="flex gap-2">
-          <button onClick={() => setDisplayMode(displayMode==='list'?'map':'list')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all shadow-sm">
-            {displayMode==='list' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
+          <button onClick={() => setDisplayMode(displayMode==='list'?'map':'list')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all">
+            {displayMode==='list'?<MapIcon className="w-5 h-5"/>:<Grid className="w-5 h-5"/>}
           </button>
-          <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center relative active:scale-90 transition-all shadow-sm">
+          <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center relative active:scale-90 transition-all">
             <User className="w-5 h-5 text-slate-400"/>
             {memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
@@ -264,13 +268,13 @@ const App = () => {
           <>
             <div className="p-4 sticky top-0 bg-slate-50/80 backdrop-blur-md z-20">
               <div className="relative group">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-focus-within:text-indigo-500 transition-colors"/>
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"/>
                 <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Find Trucks & Pop-ups..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-[24px] text-sm font-medium outline-none shadow-sm focus:ring-2 ring-indigo-500/10"/>
               </div>
             </div>
             {displayMode === 'list' ? (
               <div className="px-4 space-y-4 pb-32">
-                {filteredDrops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live ants found...</div>}
+                {filteredDrops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live spots found...</div>}
                 {filteredDrops.map(d => (
                   <div key={d.id} onClick={() => { setSelectedDrop(d); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
                     <img src={d.images?.[0] || 'https://images.unsplash.com/photo-1555529669-2269763671c0'} className="h-64 w-full object-cover" />
@@ -299,25 +303,20 @@ const App = () => {
               <button onClick={() => setView('explore')} className="absolute top-12 left-6 bg-white/90 p-3 rounded-full shadow-lg z-20"><ChevronLeft /></button>
             </div>
             <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6 shadow-2xl">
-              <div className="flex justify-between items-center">
-                 <h2 className="text-3xl font-black italic tracking-tighter">{selectedDrop.title}</h2>
-                 <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN NOW</div>
-              </div>
+              <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic tracking-tighter">{selectedDrop.title}</h2><div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest animate-pulse">Live Now</div></div>
               
               <div className="flex gap-3">
                 <button onClick={() => window.open(`https://maps.google.com/?q=${selectedDrop.lat},${selectedDrop.lng}`)} className="flex-1 bg-slate-100 p-4 rounded-3xl flex flex-col items-center gap-1 active:bg-slate-200 transition-colors shadow-sm"><Navigation className="w-6 h-6 text-slate-600"/><span className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Maps</span></button>
                 <button onClick={() => handleUberRide(selectedDrop)} className="flex-1 bg-black p-4 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform shadow-xl shadow-slate-200"><Car className="w-6 h-6 text-white"/><span className="text-[10px] font-black uppercase text-white tracking-widest">Uber</span></button>
               </div>
 
-              {selectedDrop.hasCoupon && (
-                <button className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
-                  <div className="flex items-center gap-3"><Instagram className="w-6 h-6"/><div className="text-left font-bold text-sm leading-tight">Share for 10% OFF<br/><span className="text-[9px] opacity-70 font-black uppercase tracking-widest">Snap a Story</span></div></div>
-                  {loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black border border-white/30">ANT10</div> : <Plus className="opacity-50"/>}
-                </button>
-              )}
+              <button onClick={() => shareToSocial(selectedDrop, 'instagram')} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
+                <div className="flex items-center gap-3"><Instagram className="w-6 h-6"/><div className="text-left font-bold text-sm leading-tight">Share for 10% OFF<br/><span className="text-[9px] opacity-70 font-black uppercase tracking-widest">Snap a Story</span></div></div>
+                {loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black border border-white/30">ANT10</div> : <Plus className="opacity-50"/>}
+              </button>
 
               <div className="space-y-2">
-                <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2 px-1"><ShoppingBag className="w-3 h-3" /> Today's Inventory</h3>
+                <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2 px-1"><ShoppingBag className="w-3 h-3" /> Merchant Menu</h3>
                 {selectedDrop.menu?.length > 0 ? selectedDrop.menu.map((m, i) => (
                   <div key={i} className="flex justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm">
                     <span className="font-bold text-slate-700">{m.name}</span>
@@ -326,8 +325,8 @@ const App = () => {
                 )) : <div className="p-4 text-center text-slate-300 text-xs italic">No items listed. Ask Merchant via Memo!</div>}
               </div>
 
-              <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black transition-colors shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay</p><p className="font-bold text-lg tracking-tight underline decoration-indigo-500 underline-offset-4">{selectedDrop.zelleId}</p></div>
+              <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay Merchant</p><p className="font-bold text-lg tracking-tight underline decoration-indigo-500 underline-offset-4">{selectedDrop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
             </div>
@@ -338,7 +337,7 @@ const App = () => {
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic underline decoration-indigo-200 tracking-tighter">Merchant Hub</h2>
             <div className="space-y-4">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2"><Bell className="w-4 h-4 text-red-500"/> Inbox ({memos.length})</h3>
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest flex items-center gap-2"><Bell className="w-4 h-4 text-red-500"/> Customer Inbox ({memos.length})</h3>
               {memos.length === 0 ? (
                 <div className="py-10 text-center border-2 border-dashed border-slate-100 rounded-[32px] text-slate-300 text-xs font-medium italic">No questions yet...</div>
               ) : memos.map(m => (
@@ -360,7 +359,10 @@ const App = () => {
                        <p className="font-black text-lg tracking-tighter">{myDrop.title}</p>
                     </div>
                     <div className="flex gap-1">
-                      <button onClick={() => deleteDoc(doc(fbDb, 'artifacts', APP_ID_PATH, 'public', 'data', 'drops', myDrop.id))} className="p-3 bg-red-50 text-red-400 rounded-xl active:bg-red-100 transition-colors"><Trash2 className="w-5 h-5" /></button>
+                      <button onClick={() => updateDoc(doc(fbDb, 'artifacts', APP_ID_PATH, 'public', 'data', 'drops', myDrop.id), { hasCoupon: !myDrop.hasCoupon })} className={`p-3 rounded-xl transition-all ${myDrop.hasCoupon ? 'bg-pink-100 text-pink-600' : 'bg-slate-100 text-slate-400'}`}>
+                        <Tag className="w-5 h-5" />
+                      </button>
+                      <button onClick={() => deleteDoc(doc(fbDb, 'artifacts', APP_ID_PATH, 'public', 'data', 'drops', myDrop.id))} className="p-3 bg-red-50 text-red-400 rounded-xl"><Trash2 className="w-5 h-5" /></button>
                     </div>
                   </div>
                 </div>
@@ -375,6 +377,7 @@ const App = () => {
             <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic tracking-tighter">Go Live</h2><button onClick={()=>setView('explore')}><X className="text-slate-300"/></button></div>
             
             <div className="space-y-4">
+              {/* TAKE PHOTO AREA */}
               <div className="grid grid-cols-3 gap-2">
                  {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-100 shadow-inner"><img src={img} className="w-full h-full object-cover" />{i === 0 && <Check className="absolute bottom-1 right-1 w-3 h-3 bg-indigo-600 text-white rounded-full p-0.5" />}</div>))}
                  {newDrop.images.length < 5 && (
