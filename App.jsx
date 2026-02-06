@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera, Check, Info, ToggleLeft, ToggleRight
+  Car, AlertCircle, Camera, Check, Info, Home
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -90,14 +90,12 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
-    // Drops
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Memos (Messages)
     const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
     const uMemos = onSnapshot(qMemos, 
       (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
@@ -106,8 +104,6 @@ const App = () => {
   }, [user]);
 
   // --- ACTIONS ---
-
-  // 1. Send Message
   const handleSendMessage = async () => {
     if (!msgInput.trim()) return;
     try {
@@ -123,14 +119,13 @@ const App = () => {
     } catch (e) { alert("Send failed: " + e.message); }
   };
 
-  // 2. Post Drop
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add a photo."); return; }
 
     setIsPosting(true);
     try {
-      let lat = 40.7128; let lng = -74.0060; // Default
+      let lat = 40.7128; let lng = -74.0060; 
       
       try {
         const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
@@ -167,7 +162,6 @@ const App = () => {
     finally { setIsUploading(false); }
   };
 
-  // Improved Link Handlers
   const openMaps = () => {
     const query = encodeURIComponent(selectedDrop.locationName);
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
@@ -191,20 +185,14 @@ const App = () => {
         await navigator.clipboard.writeText(txt);
         alert("Link copied!");
     }
-    // Unlock coupon logic locally if drop has one
     if (selectedDrop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
-  // Map Handler
-  const handleMapToggle = () => {
-    if (view !== 'explore') {
-      // If in detail view, go back to explore and show map
-      setView('explore');
-      setDisplayMode('map');
-    } else {
-      // Toggle between list and map
-      setDisplayMode(displayMode === 'list' ? 'map' : 'list');
-    }
+  // NEW: Home Button Logic
+  const goHome = () => {
+    setView('explore');
+    setDisplayMode('list');
+    setSelectedDrop(null);
   };
 
   // Map Component
@@ -223,7 +211,6 @@ const App = () => {
           drops.forEach(d => {
              if (d.lat) {
                  const marker = window.L.marker([d.lat, d.lng]).addTo(map);
-                 marker.bindPopup(`<b>${d.title}</b><br>${d.locationName}`);
                  marker.on('click', () => { setSelectedDrop(d); setView('shop-detail'); });
              }
           });
@@ -242,7 +229,7 @@ const App = () => {
       }
     }, [drops]);
     
-    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
+    return <div id="map-el" className="h-[80vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -256,10 +243,16 @@ const App = () => {
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
         <div className="flex gap-2">
           <button 
-            onClick={handleMapToggle} 
+            onClick={() => {
+               if (view === 'explore' && displayMode === 'list') {
+                  setDisplayMode('map');
+               } else {
+                  goHome(); // Reset if confused
+               }
+            }} 
             className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
           >
-             {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
+             {displayMode==='list' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>{memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>}</button>
         </div>
@@ -295,37 +288,26 @@ const App = () => {
             </div>
             <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6 shadow-2xl">
               <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic">{selectedDrop.title}</h2><div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN</div></div>
-              
               <div className="flex gap-3">
                 <button onClick={openMaps} className="flex-1 bg-slate-100 p-4 rounded-3xl flex flex-col items-center font-black text-xs"><Navigation className="w-6 h-6 mb-1"/>MAPS</button>
                 <button onClick={openUber} className="flex-1 bg-black text-white p-4 rounded-3xl flex flex-col items-center font-black text-xs"><Car className="w-6 h-6 mb-1"/>UBER</button>
               </div>
-
-              {/* ALWAYS VISIBLE SHARE BUTTON */}
               <button onClick={shareToSocial} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
-                <div className="flex items-center gap-3">
-                    <Share2 className="w-6 h-6"/>
-                    <div className="text-left font-bold text-sm">
-                        {selectedDrop.hasCoupon ? 'Share for 10% OFF' : 'Share this Spot'}
-                    </div>
-                </div>
-                {selectedDrop.hasCoupon && loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black">ANT10</div> : <Plus className="opacity-50"/>}
+                <div className="flex items-center gap-3"><Share2 className="w-6 h-6"/><div className="text-left font-bold text-sm">Share for 10% OFF</div></div>
+                {loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black">ANT10</div> : <Plus className="opacity-50"/>}
               </button>
-
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
                 <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedDrop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
-
               <div className="space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Items</h3>
                  {selectedDrop.menu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
               </div>
-
               <div className="pt-6 border-t border-slate-100 space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Message Merchant</h3>
                  <div className="flex gap-2">
-                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Ask a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
+                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Type a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
                     <button onClick={handleSendMessage} className="bg-black text-white p-3 rounded-xl"><Send className="w-4 h-4"/></button>
                  </div>
               </div>
@@ -351,20 +333,17 @@ const App = () => {
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'static'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'static' ? 'bg-white shadow' : 'text-slate-400'}`}><Store className="w-4 h-4" /> POP-UP</button>
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'food-truck'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'food-truck' ? 'bg-white shadow' : 'text-slate-400'}`}><Truck className="w-4 h-4" /> TRUCK</button>
               </div>
-
               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                  <span className="text-sm font-bold text-slate-700">Offer 10% Discount?</span>
                  <button onClick={() => setNewDrop({...newDrop, hasCoupon: !newDrop.hasCoupon})} className={`w-12 h-6 rounded-full relative transition-colors ${newDrop.hasCoupon ? 'bg-indigo-600' : 'bg-slate-300'}`}>
                     <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${newDrop.hasCoupon ? 'left-7' : 'left-1'}`}></div>
                  </button>
               </div>
-
               <div className="space-y-4">
                  <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Store Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
                  <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Full Address (For Uber/Maps)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
-                 <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID (Email or Phone)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
+                 <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID (Email/Phone)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
               </div>
-
               <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm">
                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Tag className="w-3 h-3"/> Items</p>
                  <div className="flex gap-2">
@@ -372,22 +351,14 @@ const App = () => {
                     <input value={menuItemInput.price} onChange={e=>setMenuItemInput({...menuItemInput, price: e.target.value})} placeholder="$" className="w-16 p-3 rounded-xl border border-slate-100 text-xs font-bold text-center outline-none" />
                     <button type="button" onClick={() => { if(menuItemInput.name) { setNewDrop({...newDrop, menu: [...newDrop.menu, {...menuItemInput}]}); setMenuItemInput({name:'', price:''}); } }} className="bg-indigo-600 text-white px-3 rounded-xl"><Plus className="w-4 h-4" /></button>
                  </div>
-                 <div className="flex flex-wrap gap-2">
-                    {newDrop.menu.map((item, idx) => (
-                      <span key={idx} className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-[9px] font-black flex items-center gap-2 border border-indigo-100">
-                        {item.name} ${item.price} 
-                        <div onClick={() => setNewDrop({...newDrop, menu: newDrop.menu.filter((_, i) => i !== idx)})} className="w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center cursor-pointer">×</div>
-                      </span>
-                    ))}
-                 </div>
+                 <div className="flex flex-wrap gap-2">{newDrop.menu.map((item, idx) => (<span key={idx} className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase">{item.name} ${item.price}</span>))}</div>
               </div>
-              
               <button 
                 onClick={handlePostDrop} 
                 disabled={isUploading || isPosting}
                 className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300 shadow-indigo-200"
               >
-                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE ON MAP'}
+                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE'}
               </button>
             </div>
           </div>
@@ -414,7 +385,7 @@ const App = () => {
       </main>
 
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-white/80 backdrop-blur-xl border border-white/40 shadow-2xl rounded-[32px] py-4 px-10 flex justify-between items-center z-40">
-        <button onClick={() => {setView('explore'); setDisplayMode('list');}} className={view==='explore'?'text-indigo-600':'text-slate-300'}><ShoppingBag/></button>
+        <button onClick={goHome} className={view==='explore'?'text-indigo-600':'text-slate-300'}><Home/></button>
         <button onClick={() => setView('post')} className="bg-indigo-600 text-white p-5 rounded-[24px] shadow-lg -mt-16 active:scale-90 transition-transform"><Plus className="w-7 h-7"/></button>
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash'?'text-indigo-600':'text-slate-300'}><User/></button>
       </nav>
