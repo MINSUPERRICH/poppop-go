@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera
+  Car, AlertCircle, Camera, Check
 } from 'lucide-react';
 
 // --- PRODUCTION SECURE CONFIGURATION ---
@@ -30,7 +30,6 @@ const getFirebaseConfig = () => {
   }
 
   try {
-    // We use a safe check for Vercel/Vite environment variables
     const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
     return {
       apiKey: env.VITE_FIREBASE_API_KEY,
@@ -59,7 +58,6 @@ if (firebaseConfig.apiKey) {
   }
 }
 
-// Consistency check: Use the exact same ID for Firestore and Storage paths
 const appId = "poppop-go-production";
 
 const App = () => {
@@ -76,10 +74,7 @@ const App = () => {
   const [memoText, setMemoText] = useState("");
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
-
-  const [newDrop, setNewDrop] = useState({
-    title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] 
-  });
+  const [errorMsg, setErrorMsg] = useState(null);
 
   useEffect(() => {
     if (!auth) return;
@@ -129,7 +124,11 @@ const App = () => {
 
   const handleFileChange = async (e) => {
     const files = Array.from(e.target.files);
-    if (!storage || files.length === 0) return;
+    if (!storage) {
+      setErrorMsg("Storage not connected. Check Vercel VITE_FIREBASE_STORAGE_BUCKET variable.");
+      return;
+    }
+    if (files.length === 0) return;
     
     setIsUploading(true);
     setUploadProgress(0);
@@ -138,17 +137,28 @@ const App = () => {
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        // Path MUST match your Firebase Storage Rules exactly
         const sRef = ref(storage, `artifacts/${appId}/drops/${Date.now()}_${file.name}`);
-        const snap = await uploadBytes(sRef, file);
-        const downloadUrl = await getDownloadURL(snap.ref);
-        urls.push(downloadUrl);
-        setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+        
+        // Use try/catch specifically for the uploadBytes call to catch permission errors
+        try {
+          const snap = await uploadBytes(sRef, file);
+          const downloadUrl = await getDownloadURL(snap.ref);
+          urls.push(downloadUrl);
+          setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+        } catch (uploadErr) {
+          console.error("Storage Error:", uploadErr.code);
+          if (uploadErr.code === 'storage/unauthorized') {
+            setErrorMsg("PERMISSION DENIED: Update your Firebase Storage Rules.");
+          } else {
+            setErrorMsg(`Upload Error: ${uploadErr.code}`);
+          }
+          setIsUploading(false);
+          return;
+        }
       }
       setNewDrop(prev => ({ ...prev, images: [...prev.images, ...urls].slice(0, 5) }));
     } catch (err) {
-      console.error("Upload failed", err);
-      alert("Upload failed. Ensure you published the Storage Rules in Firebase.");
+      console.error("General error", err);
     } finally {
       setIsUploading(false);
     }
@@ -157,7 +167,7 @@ const App = () => {
   const handlePostDrop = async (e) => {
     e.preventDefault();
     if (!db || !user || newDrop.images.length === 0) {
-      alert("Please add at least one photo.");
+      setErrorMsg("Please add a photo first!");
       return;
     }
     
@@ -172,8 +182,8 @@ const App = () => {
         });
         setView('explore');
         setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: true, menu: [] });
-      } catch (err) { console.error("Save failed", err); }
-    }, () => alert("GPS access required to Drop a Spot!"));
+      } catch (err) { setErrorMsg(`Database error: ${err.message}`); }
+    }, () => setErrorMsg("GPS must be enabled to drop a spot."));
   };
 
   const filteredDrops = drops.filter(d => 
@@ -202,15 +212,25 @@ const App = () => {
       <div className="animate-in fade-in duration-700">
         <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-6" />
         <h2 className="text-2xl font-black italic tracking-tighter uppercase">Config Error</h2>
-        <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs mx-auto">
-          API Keys are missing. Please check your Vercel Dashboard Settings.
-        </p>
+        <p className="text-slate-400 text-sm mt-3 leading-relaxed max-w-xs mx-auto">API Keys are missing in Vercel.</p>
       </div>
     </div>
   );
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans max-w-md mx-auto border-x border-slate-200 relative overflow-hidden text-slate-900">
+      
+      {/* ERROR MODAL */}
+      {errorMsg && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in">
+           <div className="bg-white p-8 rounded-[32px] shadow-2xl text-center space-y-4 max-w-xs border-2 border-red-50">
+              <AlertCircle className="w-12 h-12 text-red-500 mx-auto" />
+              <p className="font-bold text-slate-800 leading-tight">{errorMsg}</p>
+              <button onClick={() => setErrorMsg(null)} className="w-full bg-slate-900 text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest">Close</button>
+           </div>
+        </div>
+      )}
+
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <div><h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1></div>
         <div className="flex gap-2">
@@ -338,14 +358,12 @@ const App = () => {
             <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic tracking-tighter">Go Live</h2><button onClick={()=>setView('explore')}><X className="text-slate-300"/></button></div>
             
             <div className="space-y-4">
-              {/* PHOTO BOX: Now triggers CAMERA directly */}
               <div className="grid grid-cols-3 gap-2">
-                 {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-100 shadow-inner"><img src={img} className="w-full h-full object-cover" /></div>))}
+                 {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-100 shadow-inner"><img src={img} className="w-full h-full object-cover" />{i === 0 && <Check className="absolute bottom-1 right-1 w-3 h-3 bg-indigo-600 text-white rounded-full p-0.5" />}</div>))}
                  {newDrop.images.length < 5 && (
                    <label className="aspect-square rounded-2xl bg-slate-100 border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 cursor-pointer active:bg-slate-200 transition-colors relative">
                       {isUploading ? <Loader2 className="animate-spin text-indigo-600" /> : <Camera className="w-8 h-8" />}
                       <span className="text-[8px] font-black mt-1 uppercase">{isUploading ? `${uploadProgress}%` : 'Take Photo'}</span>
-                      {/* capture="environment" forces the back camera on mobile */}
                       <input 
                         type="file" 
                         accept="image/*" 
