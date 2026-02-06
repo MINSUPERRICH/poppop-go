@@ -55,7 +55,7 @@ const App = () => {
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
   const [memos, setMemos] = useState([]);
-  const [selectedDrop, setSelectedDrop] = useState(null);
+  const [selectedShop, setSelectedShop] = useState(null); // Changed from selectedDrop to selectedShop
   const [showPayment, setShowPayment] = useState(false);
   
   // States
@@ -90,12 +90,14 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
+    // Drops
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
+    // Memos (Messages)
     const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
     const uMemos = onSnapshot(qMemos, 
       (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
@@ -103,13 +105,45 @@ const App = () => {
     return () => { uDrops(); uMemos(); };
   }, [user]);
 
+  // --- LOGIC: Group Drops by Merchant ---
+  const getUniqueShops = () => {
+    const groups = {};
+    drops.forEach(drop => {
+      // Group by merchantId
+      if (!groups[drop.merchantId]) {
+        // First (latest) drop for this merchant creates the group
+        groups[drop.merchantId] = {
+          ...drop,
+          allImages: [...(drop.images || [])],
+          allMenu: [...(drop.menu || [])],
+          dropIds: [drop.id] // Keep track of all IDs
+        };
+      } else {
+        // Subsequent drops get merged into the group
+        const group = groups[drop.merchantId];
+        group.allImages = [...group.allImages, ...(drop.images || [])];
+        group.allMenu = [...group.allMenu, ...(drop.menu || [])];
+        group.dropIds.push(drop.id);
+      }
+    });
+    return Object.values(groups);
+  };
+
+  const uniqueShops = getUniqueShops();
+  const filteredShops = uniqueShops.filter(shop => {
+    const term = searchTerm.toLowerCase();
+    return shop.title.toLowerCase().includes(term) || shop.locationName.toLowerCase().includes(term);
+  });
+
   // --- ACTIONS ---
+
+  // 1. Send Message
   const handleSendMessage = async () => {
     if (!msgInput.trim()) return;
     try {
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
-        merchantId: selectedDrop.merchantId,
-        dropTitle: selectedDrop.title,
+        merchantId: selectedShop.merchantId,
+        dropTitle: selectedShop.title,
         text: msgInput,
         senderId: user.uid,
         createdAt: serverTimestamp()
@@ -119,6 +153,7 @@ const App = () => {
     } catch (e) { alert("Send failed: " + e.message); }
   };
 
+  // 2. Post Drop
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add a photo."); return; }
@@ -140,9 +175,9 @@ const App = () => {
         createdAt: serverTimestamp(),
       });
 
-      alert("SUCCESS! You are Live.");
+      alert("Item Added to Shop!");
       setView('explore');
-      setNewDrop({ title: '', locationName: '', zelleId: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
+      setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
   };
@@ -163,21 +198,21 @@ const App = () => {
   };
 
   const openMaps = () => {
-    const query = encodeURIComponent(selectedDrop.locationName);
+    const query = encodeURIComponent(selectedShop.locationName);
     window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank');
   };
 
   const openUber = () => {
-    const dest = encodeURIComponent(selectedDrop.locationName);
-    const nick = encodeURIComponent(selectedDrop.title);
+    const dest = encodeURIComponent(selectedShop.locationName);
+    const nick = encodeURIComponent(selectedShop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${dest}&dropoff[nickname]=${nick}`, '_blank');
   };
 
   const shareToSocial = async () => {
-    const txt = `Check out ${selectedDrop.title} at ${selectedDrop.locationName}! On PopPop Go.`;
+    const txt = `Check out ${selectedShop.title} at ${selectedShop.locationName}! On PopPop Go.`;
     if (navigator.share) {
         navigator.share({
-            title: selectedDrop.title,
+            title: selectedShop.title,
             text: txt,
             url: window.location.href
         }).catch(console.error);
@@ -185,14 +220,13 @@ const App = () => {
         await navigator.clipboard.writeText(txt);
         alert("Link copied!");
     }
-    if (selectedDrop.hasCoupon) setLoyaltyUnlocked(true);
+    if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
-  // NEW: Home Button Logic
   const goHome = () => {
     setView('explore');
     setDisplayMode('list');
-    setSelectedDrop(null);
+    setSelectedShop(null);
   };
 
   // Map Component
@@ -208,10 +242,12 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
-          drops.forEach(d => {
-             if (d.lat) {
-                 const marker = window.L.marker([d.lat, d.lng]).addTo(map);
-                 marker.on('click', () => { setSelectedDrop(d); setView('shop-detail'); });
+          // Use filteredShops (Grouped) for pins
+          filteredShops.forEach(shop => {
+             if (shop.lat) {
+                 const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
+                 marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
+                 marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
              }
           });
           
@@ -227,9 +263,9 @@ const App = () => {
       } else {
          loadMap();
       }
-    }, [drops]);
+    }, [filteredShops]); // Update map when shops change
     
-    return <div id="map-el" className="h-[80vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
+    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -247,12 +283,12 @@ const App = () => {
                if (view === 'explore' && displayMode === 'list') {
                   setDisplayMode('map');
                } else {
-                  goHome(); // Reset if confused
+                  goHome(); 
                }
             }} 
             className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
           >
-             {displayMode==='list' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
+             {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>{memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>}</button>
         </div>
@@ -261,17 +297,21 @@ const App = () => {
       <main className="flex-1 overflow-y-auto relative">
         {view === 'explore' && (
           <>
-            <div className="p-4 sticky top-0 bg-slate-50/80 backdrop-blur-md z-20"><div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"/><input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search spots..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-[24px] text-sm font-medium outline-none shadow-sm"/></div></div>
+            <div className="p-4 sticky top-0 bg-slate-50/80 backdrop-blur-md z-20"><div className="relative"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"/><input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search Merchants..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-[24px] text-sm font-medium outline-none shadow-sm"/></div></div>
             {displayMode === 'list' ? (
               <div className="px-4 space-y-4 pb-32">
-                {drops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live spots...</div>}
-                {drops.filter(d => d.title?.toLowerCase().includes(searchTerm.toLowerCase())).map(d => (
-                  <div key={d.id} onClick={() => { setSelectedDrop(d); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
-                    <img src={d.images?.[0]} className="h-64 w-full object-cover" />
+                {filteredShops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live shops...</div>}
+                {filteredShops.map(shop => (
+                  <div key={shop.id} onClick={() => { setSelectedShop(shop); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
+                    <img src={shop.images?.[0] || shop.allImages?.[0]} className="h-64 w-full object-cover" />
                     <div className="p-5">
-                      <div className="flex gap-1 mb-1">{d.type==='food-truck' && <span className="bg-amber-100 text-amber-600 text-[8px] font-black px-2 py-0.5 rounded-md">TRUCK</span>}{d.hasCoupon && <span className="bg-pink-100 text-pink-600 text-[8px] font-black px-2 py-0.5 rounded-md">10% OFF</span>}</div>
-                      <h3 className="font-bold text-lg">{d.title}</h3>
-                      <p className="text-xs text-slate-400 font-bold italic flex items-center gap-1"><MapPin className="w-3 h-3 text-red-500"/> {d.locationName}</p>
+                      <div className="flex gap-1 mb-1">
+                          {shop.type==='food-truck' && <span className="bg-amber-100 text-amber-600 text-[8px] font-black px-2 py-0.5 rounded-md">TRUCK</span>}
+                          {shop.hasCoupon && <span className="bg-pink-100 text-pink-600 text-[8px] font-black px-2 py-0.5 rounded-md">10% OFF</span>}
+                          {shop.allImages.length > 1 && <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-md">+{shop.allImages.length} ITEMS</span>}
+                      </div>
+                      <h3 className="font-bold text-lg">{shop.title}</h3>
+                      <p className="text-xs text-slate-400 font-bold italic flex items-center gap-1"><MapPin className="w-3 h-3 text-red-500"/> {shop.locationName}</p>
                     </div>
                   </div>
                 ))}
@@ -280,30 +320,45 @@ const App = () => {
           </>
         )}
 
-        {view === 'shop-detail' && selectedDrop && (
+        {view === 'shop-detail' && selectedShop && (
           <div className="pb-40 bg-white min-h-screen animate-in slide-in-from-right">
-            <div className="relative h-80 flex overflow-x-auto snap-x scrollbar-hide">
-              {selectedDrop.images?.map((img, i) => <img key={i} src={img} className="w-full h-full object-cover snap-center shrink-0" />)}
+            {/* Gallery of ALL items from this merchant */}
+            <div className="relative h-80 flex overflow-x-auto snap-x scrollbar-hide bg-black">
+              {selectedShop.allImages?.map((img, i) => <img key={i} src={img} className="w-full h-full object-contain snap-center shrink-0" />)}
               <button onClick={() => setView('explore')} className="absolute top-12 left-6 bg-white/90 p-3 rounded-full shadow-lg"><ChevronLeft /></button>
             </div>
+            
             <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6 shadow-2xl">
-              <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic">{selectedDrop.title}</h2><div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN</div></div>
+              <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic">{selectedShop.title}</h2><div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black">OPEN</div></div>
               <div className="flex gap-3">
                 <button onClick={openMaps} className="flex-1 bg-slate-100 p-4 rounded-3xl flex flex-col items-center font-black text-xs"><Navigation className="w-6 h-6 mb-1"/>MAPS</button>
                 <button onClick={openUber} className="flex-1 bg-black text-white p-4 rounded-3xl flex flex-col items-center font-black text-xs"><Car className="w-6 h-6 mb-1"/>UBER</button>
               </div>
-              <button onClick={shareToSocial} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
-                <div className="flex items-center gap-3"><Share2 className="w-6 h-6"/><div className="text-left font-bold text-sm">Share for 10% OFF</div></div>
-                {loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black">ANT10</div> : <Plus className="opacity-50"/>}
-              </button>
+
+              {selectedShop.hasCoupon && (
+                <button onClick={shareToSocial} className="w-full bg-gradient-to-r from-pink-500 to-indigo-600 p-5 rounded-[32px] text-white flex justify-between items-center shadow-xl active:scale-95 transition-all">
+                  <div className="flex items-center gap-3"><Share2 className="w-6 h-6"/><div className="text-left font-bold text-sm">Share for 10% OFF</div></div>
+                  {loyaltyUnlocked ? <div className="bg-white/20 px-3 py-1 rounded-lg text-xs font-black">ANT10</div> : <Plus className="opacity-50"/>}
+                </button>
+              )}
+              
+              {!selectedShop.hasCoupon && (
+                <button onClick={shareToSocial} className="w-full bg-slate-100 p-5 rounded-[32px] text-slate-800 flex justify-center items-center shadow-sm active:scale-95">
+                  <div className="flex items-center gap-3"><Share2 className="w-5 h-5"/><span className="font-bold text-sm">Share this Spot</span></div>
+                </button>
+              )}
+
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedDrop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
+
               <div className="space-y-2">
-                 <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Items</h3>
-                 {selectedDrop.menu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
+                 <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
+                 {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
+                 {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
               </div>
+
               <div className="pt-6 border-t border-slate-100 space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Message Merchant</h3>
                  <div className="flex gap-2">
@@ -317,7 +372,7 @@ const App = () => {
 
         {view === 'post' && (
           <div className="p-8 space-y-6 pb-40 animate-in slide-in-from-bottom font-sans">
-            <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic">Go Live</h2><button onClick={()=>setView('explore')}><X/></button></div>
+            <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic">Add Item</h2><button onClick={()=>setView('explore')}><X/></button></div>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2">
                  {newDrop.images.map((img, i) => (<div key={i} className="aspect-square rounded-2xl overflow-hidden relative border border-slate-100 shadow-inner"><img src={img} className="w-full h-full object-cover" /><Check className="absolute bottom-1 right-1 w-4 h-4 bg-indigo-600 text-white rounded-full p-0.5"/></div>))}
@@ -333,17 +388,20 @@ const App = () => {
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'static'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'static' ? 'bg-white shadow' : 'text-slate-400'}`}><Store className="w-4 h-4" /> POP-UP</button>
                 <button type="button" onClick={() => setNewDrop({...newDrop, type: 'food-truck'})} className={`flex-1 py-3 rounded-xl text-[10px] font-black ${newDrop.type === 'food-truck' ? 'bg-white shadow' : 'text-slate-400'}`}><Truck className="w-4 h-4" /> TRUCK</button>
               </div>
+
               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                  <span className="text-sm font-bold text-slate-700">Offer 10% Discount?</span>
                  <button onClick={() => setNewDrop({...newDrop, hasCoupon: !newDrop.hasCoupon})} className={`w-12 h-6 rounded-full relative transition-colors ${newDrop.hasCoupon ? 'bg-indigo-600' : 'bg-slate-300'}`}>
                     <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${newDrop.hasCoupon ? 'left-7' : 'left-1'}`}></div>
                  </button>
               </div>
+
               <div className="space-y-4">
                  <input required value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title:e.target.value})} placeholder="Store Name" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
                  <input required value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName:e.target.value})} placeholder="Full Address (For Uber/Maps)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
                  <input required value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId:e.target.value})} placeholder="Zelle ID (Email/Phone)" className="w-full p-4 rounded-2xl border border-slate-200 font-bold outline-none" />
               </div>
+
               <div className="p-5 bg-white border border-slate-100 rounded-3xl space-y-3 shadow-sm">
                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Tag className="w-3 h-3"/> Items</p>
                  <div className="flex gap-2">
@@ -353,12 +411,13 @@ const App = () => {
                  </div>
                  <div className="flex flex-wrap gap-2">{newDrop.menu.map((item, idx) => (<span key={idx} className="bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase">{item.name} ${item.price}</span>))}</div>
               </div>
+              
               <button 
                 onClick={handlePostDrop} 
                 disabled={isUploading || isPosting}
                 className="w-full bg-indigo-600 text-white py-5 rounded-[28px] font-black shadow-xl uppercase tracking-widest text-xs active:scale-95 transition-all disabled:bg-slate-300 shadow-indigo-200"
               >
-                {isPosting ? 'WORKING...' : isUploading ? 'Uploading...' : 'GO LIVE'}
+                {isPosting ? 'SAVING...' : isUploading ? 'UPLOADING...' : 'ADD TO SHOP'}
               </button>
             </div>
           </div>
@@ -368,11 +427,20 @@ const App = () => {
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2>
             <div className="space-y-4">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Spots</h3>
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
-                <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between"><span className="font-bold">{myDrop.title}</span><button onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}><Trash2 className="text-red-400"/></button></div>
+                <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div className="flex gap-3 items-center">
+                    <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover" />
+                    <div>
+                      <span className="font-bold block text-sm">{myDrop.title}</span>
+                      <span className="text-[10px] text-slate-400">1 Item Added</span>
+                    </div>
+                  </div>
+                  <button className="p-4 bg-red-50 text-red-400 rounded-2xl active:bg-red-100" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}><Trash2 className="w-5 h-5"/></button>
+                </div>
               ))}
-              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ NEW DROP</button>
+              <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
             </div>
             <div className="space-y-4 pt-6 border-t border-slate-100">
               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
@@ -390,7 +458,7 @@ const App = () => {
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash'?'text-indigo-600':'text-slate-300'}><User/></button>
       </nav>
 
-      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedDrop.zelleId)}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedDrop.zelleId}</h3><button onClick={()=>setShowPayment(false)} className="bg-black text-white px-8 py-3 rounded-full">Done</button></div></div>}
+      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedShop?.zelleId}</h3><button onClick={()=>setShowPayment(false)} className="bg-black text-white px-8 py-3 rounded-full">Done</button></div></div>}
     </div>
   );
 };
