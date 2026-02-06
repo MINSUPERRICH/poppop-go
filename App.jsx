@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon
+  Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon, Link as LinkIcon
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -36,6 +36,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
+// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -62,14 +63,16 @@ const App = () => {
   const [isPosting, setIsPosting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   
+  // Data States
   const [searchTerm, setSearchTerm] = useState("");
   const [msgInput, setMsgInput] = useState(""); 
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '' });
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
+  // Added zelleLink to state
   const [newDrop, setNewDrop] = useState({
-    title: '', locationName: '', zelleId: '', zelleQrUrl: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
+    title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
   // 1. Auth
@@ -88,14 +91,12 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
-    // Drops
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
@@ -181,7 +182,7 @@ const App = () => {
 
       alert("Spot Published!");
       setView('explore');
-      setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
+      setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
   };
@@ -232,7 +233,6 @@ const App = () => {
     setSelectedShop(null);
   };
 
-  // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
     useEffect(() => {
@@ -242,9 +242,7 @@ const App = () => {
           
           const map = window.L.map('map-el', {zoomControl: false}).setView([40.7128, -74.0060], 13);
           mapRef.current = map;
-          
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
-          
           filteredShops.forEach(shop => {
              if (shop.lat) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
@@ -252,10 +250,8 @@ const App = () => {
                  marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
              }
           });
-          
           navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
       };
-      
       if (!window.L) {
          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
          document.head.appendChild(link);
@@ -264,7 +260,6 @@ const App = () => {
          document.head.appendChild(script);
       } else { loadMap(); }
     }, [filteredShops]);
-    
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
@@ -278,13 +273,7 @@ const App = () => {
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
         <div className="flex gap-2">
-          <button 
-            onClick={() => {
-               if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } 
-               else { goHome(); }
-            }} 
-            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
-          >
+          <button onClick={() => { if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } else { goHome(); }}} className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}>
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
@@ -347,7 +336,7 @@ const App = () => {
               )}
 
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
 
@@ -383,13 +372,27 @@ const App = () => {
                  )}
               </div>
               
-              <div className="p-4 bg-indigo-50 rounded-2xl border-2 border-dashed border-indigo-200">
-                 <p className="text-[10px] font-black text-indigo-400 uppercase mb-2">Optional: Upload Real Zelle QR</p>
+              {/* ZELLE QR SECTION (LINK or IMAGE) */}
+              <div className="p-4 bg-indigo-50 rounded-2xl border-2 border-dashed border-indigo-200 space-y-3">
+                 <p className="text-[10px] font-black text-indigo-400 uppercase">Zelle Payment Setup (Optional)</p>
+                 
+                 {/* Option 1: Paste Link */}
+                 <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-indigo-100">
+                    <LinkIcon className="w-4 h-4 text-indigo-300"/>
+                    <input 
+                      value={newDrop.zelleLink} 
+                      onChange={e=>setNewDrop({...newDrop, zelleLink:e.target.value})} 
+                      placeholder="Paste Link from Bank App..." 
+                      className="flex-1 text-xs outline-none font-medium"
+                    />
+                 </div>
+
+                 {/* Option 2: Upload Screenshot */}
                  {newDrop.zelleQrUrl ? (
-                   <div className="flex items-center gap-2 text-green-600 font-bold text-xs"><CheckCircle2 className="w-4 h-4" /> QR Uploaded!</div>
+                   <div className="flex items-center gap-2 text-green-600 font-bold text-xs"><CheckCircle2 className="w-4 h-4" /> QR Image Uploaded</div>
                  ) : (
-                   <label className="flex items-center gap-2 text-indigo-600 font-bold text-xs cursor-pointer">
-                      <ImageIcon className="w-4 h-4" /> Upload from Bank App
+                   <label className="flex items-center justify-center gap-2 bg-white py-2 rounded-xl border border-indigo-100 text-indigo-600 font-bold text-xs cursor-pointer shadow-sm">
+                      <ImageIcon className="w-4 h-4" /> Upload QR Screenshot
                       <input type="file" accept="image/*" onChange={(e)=>handleFileChange(e, 'zelle')} className="hidden" />
                    </label>
                  )}
@@ -502,8 +505,10 @@ const App = () => {
             </div>
             <h3 className="text-2xl font-black text-slate-900 mb-2">Scan to Pay</h3>
             
-            {/* NEW: SHOW REAL UPLOADED QR IF EXISTS */}
-            {selectedShop?.zelleQrUrl ? (
+            {/* Logic: Show Link QR, Image, or Default */}
+            {selectedShop?.zelleLink ? (
+               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop.zelleLink)}`} className="mx-auto mb-4 rounded-xl border-2 border-indigo-100" />
+            ) : selectedShop?.zelleQrUrl ? (
                <img src={selectedShop.zelleQrUrl} className="w-48 h-48 mx-auto mb-4 rounded-lg shadow-md border-2 border-slate-100" />
             ) : (
                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl opacity-50" />
@@ -513,9 +518,8 @@ const App = () => {
               <span className="font-black text-lg text-indigo-600 truncate">{selectedShop?.zelleId}</span>
               <span className="text-xs font-bold text-slate-400 bg-white px-2 py-1 rounded-md shadow-sm">COPY</span>
             </div>
-            <p className="text-[10px] text-slate-400 mb-6 italic">If scan fails, copy ID above.</p>
-
-            <button onClick={handlePaymentNotify} className="w-full bg-green-500 text-white py-4 rounded-2xl font-black text-sm shadow-lg shadow-green-200 active:scale-95 transition-transform">NOTIFY MERCHANT I'VE PAID</button>
+            
+            <button onClick={handlePaymentNotify} className="w-full bg-green-500 text-white py-4 rounded-2xl font-black text-sm shadow-lg shadow-green-200 active:scale-95 transition-transform mt-4">DONE PAYING MERCHANT</button>
             <button onClick={() => setShowPayment(false)} className="mt-4 text-slate-400 text-xs font-bold w-full py-2">Cancel</button>
           </div>
         </div>
