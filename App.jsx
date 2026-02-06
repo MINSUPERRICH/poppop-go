@@ -16,7 +16,7 @@ import {
   ChevronRight, Loader2, Trash2, Navigation, 
   MessageSquare, Send, Bell, Search, Share2, 
   Instagram, Truck, Store, Zap, CheckCircle2, Ticket, Tag,
-  Car, AlertCircle, Camera, Check, Info, Home
+  Car, AlertCircle, Camera, Check, Info, Home, DollarSign, Clock
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -54,8 +54,8 @@ const App = () => {
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
-  const [memos, setMemos] = useState([]);
-  const [selectedShop, setSelectedShop] = useState(null); // Changed from selectedDrop to selectedShop
+  const [orders, setOrders] = useState([]); // New Order State
+  const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
   // States
@@ -94,32 +94,29 @@ const App = () => {
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
+      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: You can only edit your own items."); }
     );
     
-    // Memos (Messages)
-    const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
-    const uMemos = onSnapshot(qMemos, 
-      (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
+    // Orders (Replacing Memos for clearer business logic)
+    const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
+    const uOrders = onSnapshot(qOrders, 
+      (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)))
     );
-    return () => { uDrops(); uMemos(); };
+    return () => { uDrops(); uOrders(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops by Merchant ---
+  // --- LOGIC: Group Drops ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Group by merchantId
       if (!groups[drop.merchantId]) {
-        // First (latest) drop for this merchant creates the group
         groups[drop.merchantId] = {
           ...drop,
           allImages: [...(drop.images || [])],
           allMenu: [...(drop.menu || [])],
-          dropIds: [drop.id] // Keep track of all IDs
+          dropIds: [drop.id]
         };
       } else {
-        // Subsequent drops get merged into the group
         const group = groups[drop.merchantId];
         group.allImages = [...group.allImages, ...(drop.images || [])];
         group.allMenu = [...group.allMenu, ...(drop.menu || [])];
@@ -137,23 +134,32 @@ const App = () => {
 
   // --- ACTIONS ---
 
-  // 1. Send Message
-  const handleSendMessage = async () => {
-    if (!msgInput.trim()) return;
+  // 1. Submit Order (Buyer)
+  const handlePaymentSent = async () => {
     try {
-      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
+      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'), {
         merchantId: selectedShop.merchantId,
-        dropTitle: selectedShop.title,
-        text: msgInput,
-        senderId: user.uid,
-        createdAt: serverTimestamp()
+        shopTitle: selectedShop.title,
+        buyerId: user.uid,
+        status: 'pending', // pending -> verified
+        timestamp: serverTimestamp(),
+        details: "Zelle Payment Sent"
       });
-      alert("Message Sent to Merchant!");
-      setMsgInput("");
-    } catch (e) { alert("Send failed: " + e.message); }
+      setShowPayment(false);
+      alert("Merchant notified! Wait for them to confirm.");
+    } catch (e) { alert("Error: " + e.message); }
   };
 
-  // 2. Post Drop
+  // 2. Verify Order (Merchant)
+  const handleVerifyOrder = async (orderId) => {
+    try {
+      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), {
+        status: 'verified'
+      });
+    } catch (e) { alert("Permission Denied: You can only verify orders for your shop."); }
+  };
+
+  // 3. Post Drop
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add a photo."); return; }
@@ -242,7 +248,6 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
-          // Use filteredShops (Grouped) for pins
           filteredShops.forEach(shop => {
              if (shop.lat) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
@@ -263,7 +268,7 @@ const App = () => {
       } else {
          loadMap();
       }
-    }, [filteredShops]); // Update map when shops change
+    }, [filteredShops]);
     
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
@@ -290,7 +295,9 @@ const App = () => {
           >
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
-          <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>{memos.length>0&&<span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>}</button>
+          <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
+          {orders.filter(o => o.merchantId === user?.uid && o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
+          </button>
         </div>
       </header>
 
@@ -322,7 +329,6 @@ const App = () => {
 
         {view === 'shop-detail' && selectedShop && (
           <div className="pb-40 bg-white min-h-screen animate-in slide-in-from-right">
-            {/* Gallery of ALL items from this merchant */}
             <div className="relative h-80 flex overflow-x-auto snap-x scrollbar-hide bg-black">
               {selectedShop.allImages?.map((img, i) => <img key={i} src={img} className="w-full h-full object-contain snap-center shrink-0" />)}
               <button onClick={() => setView('explore')} className="absolute top-12 left-6 bg-white/90 p-3 rounded-full shadow-lg"><ChevronLeft /></button>
@@ -357,14 +363,6 @@ const App = () => {
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
                  {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
                  {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
-              </div>
-
-              <div className="pt-6 border-t border-slate-100 space-y-2">
-                 <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Message Merchant</h3>
-                 <div className="flex gap-2">
-                    <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} placeholder="Type a question..." className="flex-1 p-3 bg-slate-50 rounded-xl text-sm outline-none" />
-                    <button onClick={handleSendMessage} className="bg-black text-white p-3 rounded-xl"><Send className="w-4 h-4"/></button>
-                 </div>
               </div>
             </div>
           </div>
@@ -426,7 +424,29 @@ const App = () => {
         {view === 'merchant-dash' && (
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2>
+            
+            {/* NEW: ORDERS SECTION */}
             <div className="space-y-4">
+               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Customer Payments</h3>
+               {orders.filter(o => o.merchantId === user?.uid).length === 0 ? <div className="text-center text-slate-300 italic text-sm">No new orders</div> : 
+                 orders.filter(o => o.merchantId === user?.uid).map(order => (
+                    <div key={order.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                       <div className="flex justify-between items-center mb-2">
+                          <span className="font-bold text-sm">Payment Claim</span>
+                          <span className={`text-[10px] px-2 py-1 rounded-full font-black ${order.status === 'verified' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>{order.status.toUpperCase()}</span>
+                       </div>
+                       <p className="text-xs text-slate-500 mb-3">{order.details}</p>
+                       {order.status !== 'verified' && (
+                         <div className="flex gap-2">
+                            <button className="flex-1 bg-green-500 text-white py-2 rounded-xl text-xs font-bold" onClick={() => handleVerifyOrder(order.id)}>Confirm Received</button>
+                         </div>
+                       )}
+                    </div>
+                 ))
+               }
+            </div>
+
+            <div className="space-y-4 pt-6 border-t border-slate-100">
               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm flex items-center justify-between">
@@ -442,12 +462,6 @@ const App = () => {
               ))}
               <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
             </div>
-            <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
-              {memos.length === 0 ? <div className="text-center text-slate-300 italic text-sm">No messages.</div> : memos.map(m => (
-                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
-              ))}
-            </div>
           </div>
         )}
       </main>
@@ -458,7 +472,7 @@ const App = () => {
         <button onClick={() => setView('merchant-dash')} className={view==='merchant-dash'?'text-indigo-600':'text-slate-300'}><User/></button>
       </nav>
 
-      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedShop?.zelleId}</h3><button onClick={()=>setShowPayment(false)} className="bg-black text-white px-8 py-3 rounded-full">Done</button></div></div>}
+      {showPayment && <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-10"><div className="bg-white p-10 rounded-3xl text-center"><img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(selectedShop?.zelleId || "Zelle")}`} className="mx-auto mb-4 rounded-xl"/><h3 className="font-black text-xl mb-4 text-indigo-600">{selectedShop?.zelleId}</h3><p className="text-slate-400 text-xs mb-6">Check your banking app to send money.</p><button onClick={handlePaymentSent} className="bg-green-500 text-white px-8 py-3 rounded-full font-bold shadow-lg">I Sent Payment</button></div></div>}
     </div>
   );
 };
