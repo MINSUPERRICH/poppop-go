@@ -21,6 +21,11 @@ import {
 
 // --- CONFIGURATION ---
 const getFirebaseConfig = () => {
+  // 1. Try Preview Config
+  if (typeof __firebase_config !== 'undefined') {
+    try { return JSON.parse(__firebase_config); } catch (e) { }
+  }
+  // 2. Try Vite/Production Config
   try {
     const env = import.meta.env || {};
     return {
@@ -36,7 +41,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
+// Safe Init
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -70,7 +75,6 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Added zelleLink to state
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
@@ -80,7 +84,7 @@ const App = () => {
     if (!popAuth) return;
     const tryLogin = async () => {
        if (!popAuth.currentUser) {
-          try { await signInAnonymously(popAuth); } catch(e) { console.error("Auto-login failed", e); }
+          try { await signInAnonymously(popAuth); } catch(e) { console.error("Login failed", e); }
        }
     };
     tryLogin();
@@ -108,26 +112,32 @@ const App = () => {
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
+      // Safety check for missing data
+      if (!drop.merchantId || !drop.images) return;
+
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          allImages: [...(drop.images || [])],
+          allImages: [...drop.images],
           allMenu: [...(drop.menu || [])],
-          dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
-        group.allImages = [...group.allImages, ...(drop.images || [])];
+        group.allImages = [...group.allImages, ...drop.images];
         group.allMenu = [...group.allMenu, ...(drop.menu || [])];
-        group.dropIds.push(drop.id);
       }
     });
     return Object.values(groups);
   };
   const uniqueShops = getUniqueShops();
+  
+  // Real-time Search Filter
   const filteredShops = uniqueShops.filter(shop => {
     const term = searchTerm.toLowerCase();
-    return shop.title.toLowerCase().includes(term) || shop.locationName.toLowerCase().includes(term);
+    return (
+      (shop.title && shop.title.toLowerCase().includes(term)) || 
+      (shop.locationName && shop.locationName.toLowerCase().includes(term))
+    );
   });
 
   // --- ACTIONS ---
@@ -150,7 +160,7 @@ const App = () => {
   const handleVerifyOrder = async (orderId) => {
     try {
       await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), { status: 'verified' });
-    } catch (e) { alert("Only the merchant can verify this."); }
+    } catch (e) { alert("Action denied."); }
   };
 
   const deleteItemFromShop = async (dropId, itemIndex) => {
@@ -162,7 +172,7 @@ const App = () => {
 
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
-    if (newDrop.images.length === 0) { alert("Please add at least 1 item photo."); return; }
+    if (newDrop.images.length === 0) { alert("Please add at least 1 photo."); return; }
 
     setIsPosting(true);
     try {
@@ -233,6 +243,13 @@ const App = () => {
     setSelectedShop(null);
   };
 
+  const handleShopClick = (shop) => {
+    if (!shop) return;
+    setSelectedShop(shop);
+    setView('shop-detail');
+  };
+
+  // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
     useEffect(() => {
@@ -242,16 +259,25 @@ const App = () => {
           
           const map = window.L.map('map-el', {zoomControl: false}).setView([40.7128, -74.0060], 13);
           mapRef.current = map;
+          
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
+          
           filteredShops.forEach(shop => {
              if (shop.lat) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
                  marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
-                 marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
+                 marker.on('click', () => { 
+                   // Dispatch custom event to handle React state from Leaflet
+                   window.dispatchEvent(new CustomEvent('map-click', { detail: shop }));
+                 });
              }
           });
           navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
       };
+      
+      const handleMapEvent = (e) => handleShopClick(e.detail);
+      window.addEventListener('map-click', handleMapEvent);
+
       if (!window.L) {
          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
          document.head.appendChild(link);
@@ -259,7 +285,10 @@ const App = () => {
          script.onload = loadMap;
          document.head.appendChild(script);
       } else { loadMap(); }
+
+      return () => window.removeEventListener('map-click', handleMapEvent);
     }, [filteredShops]);
+    
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
@@ -273,7 +302,13 @@ const App = () => {
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
         <div className="flex gap-2">
-          <button onClick={() => { if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } else { goHome(); }}} className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}>
+          <button 
+            onClick={() => {
+               if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } 
+               else { goHome(); }
+            }} 
+            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
+          >
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
@@ -290,7 +325,7 @@ const App = () => {
               <div className="px-4 space-y-4 pb-32">
                 {filteredShops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live shops...</div>}
                 {filteredShops.map(shop => (
-                  <div key={shop.id} onClick={() => { setSelectedShop(shop); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
+                  <div key={shop.id} onClick={() => handleShopClick(shop)} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
                     <img src={shop.images?.[0] || shop.allImages?.[0]} className="h-64 w-full object-cover" />
                     <div className="p-5">
                       <div className="flex gap-1 mb-1">
@@ -372,11 +407,9 @@ const App = () => {
                  )}
               </div>
               
-              {/* ZELLE QR SECTION (LINK or IMAGE) */}
+              {/* NEW ZELLE LINK SECTION */}
               <div className="p-4 bg-indigo-50 rounded-2xl border-2 border-dashed border-indigo-200 space-y-3">
-                 <p className="text-[10px] font-black text-indigo-400 uppercase">Zelle Payment Setup (Optional)</p>
-                 
-                 {/* Option 1: Paste Link */}
+                 <p className="text-[10px] font-black text-indigo-400 uppercase">Zelle Setup (Optional)</p>
                  <div className="flex items-center gap-2 bg-white p-2 rounded-xl border border-indigo-100">
                     <LinkIcon className="w-4 h-4 text-indigo-300"/>
                     <input 
@@ -386,13 +419,11 @@ const App = () => {
                       className="flex-1 text-xs outline-none font-medium"
                     />
                  </div>
-
-                 {/* Option 2: Upload Screenshot */}
                  {newDrop.zelleQrUrl ? (
                    <div className="flex items-center gap-2 text-green-600 font-bold text-xs"><CheckCircle2 className="w-4 h-4" /> QR Image Uploaded</div>
                  ) : (
                    <label className="flex items-center justify-center gap-2 bg-white py-2 rounded-xl border border-indigo-100 text-indigo-600 font-bold text-xs cursor-pointer shadow-sm">
-                      <ImageIcon className="w-4 h-4" /> Upload QR Screenshot
+                      <ImageIcon className="w-4 h-4" /> Or Upload Screenshot
                       <input type="file" accept="image/*" onChange={(e)=>handleFileChange(e, 'zelle')} className="hidden" />
                    </label>
                  )}
