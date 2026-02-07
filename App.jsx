@@ -36,7 +36,6 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -54,7 +53,7 @@ const App = () => {
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
-  const [memos, setMemos] = useState([]);
+  const [orders, setOrders] = useState([]); 
   const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
@@ -70,11 +69,12 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
+  // Form State
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
-  // 1. Auth & Auto-Retry
+  // 1. Auth
   useEffect(() => {
     if (!popAuth) return;
     const tryLogin = async () => {
@@ -94,32 +94,29 @@ const App = () => {
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { 
-        console.error("Firestore Error", e);
-        if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); 
-      }
+      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Memos (Messages)
-    const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
-    const uMemos = onSnapshot(qMemos, 
-      (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
+    // Orders
+    const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
+    const uOrders = onSnapshot(qOrders, 
+      (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
     );
-    return () => { uDrops(); uMemos(); };
+    return () => { uDrops(); uOrders(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops (Crash Proof) ---
+  // --- LOGIC: Group Drops (Safe) ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety Check
-      if (!drop || !drop.merchantId) return;
+      // Safety check for bad data
+      if (!drop.merchantId || !drop.id) return;
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
           title: drop.title || "Unknown Shop",
-          locationName: drop.locationName || "No Location",
+          locationName: drop.locationName || "Location N/A",
           allImages: Array.isArray(drop.images) ? [...drop.images] : [],
           allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
@@ -131,12 +128,15 @@ const App = () => {
         if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
         
-        // Update to latest location info if newer
+        // Update to latest location/title if newer
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
-           group.lat = drop.lat;
-           group.lng = drop.lng;
-           group.locationName = drop.locationName;
-           group.title = drop.title;
+            group.title = drop.title;
+            group.locationName = drop.locationName;
+            group.lat = drop.lat;
+            group.lng = drop.lng;
+            // Also take the latest Zelle info
+            if (drop.zelleLink) group.zelleLink = drop.zelleLink;
+            if (drop.zelleQrUrl) group.zelleQrUrl = drop.zelleQrUrl;
         }
       }
     });
@@ -162,19 +162,32 @@ const App = () => {
     setView('explore');
   };
 
-  const handleSendMessage = async () => {
-    if (!msgInput.trim()) return;
+  const handlePaymentNotify = async () => {
     try {
-      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
+      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'), {
         merchantId: selectedShop.merchantId,
-        dropTitle: selectedShop.title || "Shop Query",
-        text: msgInput,
-        senderId: user.uid,
-        createdAt: serverTimestamp()
+        shopTitle: selectedShop.title,
+        buyerId: user.uid,
+        status: 'pending',
+        timestamp: serverTimestamp(),
+        details: "Zelle Payment Reported"
       });
-      alert("Message Sent to Merchant!");
-      setMsgInput("");
-    } catch (e) { alert("Send failed: " + e.message); }
+      setShowPayment(false);
+      alert("Merchant Notified!");
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const handleVerifyOrder = async (orderId) => {
+    try {
+      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), { status: 'verified' });
+    } catch (e) { alert("Only the merchant can verify this."); }
+  };
+
+  const deleteItemFromShop = async (dropId, itemIndex) => {
+    const drop = drops.find(d => d.id === dropId);
+    if (!drop) return;
+    const newMenu = drop.menu ? drop.menu.filter((_, i) => i !== itemIndex) : [];
+    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
   const handlePostDrop = async () => {
@@ -244,6 +257,21 @@ const App = () => {
     if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
+  const handleSendMessage = async () => {
+    if (!msgInput.trim()) return;
+    try {
+      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
+        merchantId: selectedShop.merchantId,
+        dropTitle: selectedShop.title,
+        text: msgInput,
+        senderId: user.uid,
+        createdAt: serverTimestamp()
+      });
+      alert("Message Sent to Merchant!");
+      setMsgInput("");
+    } catch (e) { alert("Send failed: " + e.message); }
+  };
+
   // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
@@ -267,7 +295,7 @@ const App = () => {
              }
           });
           
-          // Auto-Fit Map
+          // Auto-Fit Map to show all pins
           if (markers.length > 0) {
             const bounds = window.L.latLngBounds(markers);
             map.fitBounds(bounds, { padding: [50, 50] });
@@ -285,7 +313,7 @@ const App = () => {
       } else { loadMap(); }
     }, [filteredShops]);
     
-    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4 border border-slate-200"></div>;
+    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -308,7 +336,7 @@ const App = () => {
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
-          {memos.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
+          {orders.filter(o => o.merchantId === user?.uid && o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
         </div>
       </header>
@@ -367,13 +395,14 @@ const App = () => {
               )}
 
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
 
               <div className="space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
                  {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
+                 {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
               </div>
               
               <div className="pt-6 border-t border-slate-100 space-y-2">
@@ -470,14 +499,61 @@ const App = () => {
         {view === 'merchant-dash' && (
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2>
+            <div className="space-y-4">
+              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Customer Payments</h3>
+              {orders.filter(o => o.merchantId === user?.uid).length === 0 ? <div className="text-center text-slate-300 italic text-sm">No new orders</div> : 
+                 orders.filter(o => o.merchantId === user?.uid).map(order => (
+                    <div key={order.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                       <div className="flex justify-between items-center mb-2">
+                          <span className="font-bold text-sm">Payment Claim</span>
+                          <span className={`text-[10px] px-2 py-1 rounded-full font-black ${order.status === 'verified' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>{order.status.toUpperCase()}</span>
+                       </div>
+                       <p className="text-xs text-slate-500 mb-3">{order.details}</p>
+                       {order.status !== 'verified' && <button className="w-full bg-green-500 text-white py-2 rounded-xl text-xs font-bold" onClick={() => handleVerifyOrder(order.id)}>Confirm Received</button>}
+                    </div>
+                 ))
+              }
+            </div>
+
+            <div className="space-y-4 pt-6 border-t border-slate-100">
+               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
+               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
+                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm">
+                   <div className="flex gap-3 items-center mb-3">
+                     <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover" />
+                     <div className="flex-1">
+                       <span className="font-bold block text-sm">{myDrop.title}</span>
+                       <button className="text-red-400 text-xs font-bold" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}>Delete Spot</button>
+                     </div>
+                   </div>
+                   {/* Item Delete List */}
+                   <div className="space-y-1">
+                     {myDrop.menu?.map((item, idx) => (
+                       <div key={idx} className="flex justify-between items-center text-xs p-2 bg-slate-50 rounded-lg">
+                         <span>{item.name}</span>
+                         <X className="w-4 h-4 text-slate-300 cursor-pointer" onClick={() => deleteItemFromShop(myDrop.id, idx)} />
+                       </div>
+                     ))}
+                   </div>
+                 </div>
+               ))}
+               <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
+            </div>
+            
             <div className="space-y-4 pt-6 border-t border-slate-100">
               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
               {memos.length === 0 ? <div className="text-center text-slate-300 italic text-sm">No messages.</div> : memos.map(m => (
-                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle || "Customer"}</p><p className="text-sm font-medium">{m.text}</p></div>
+                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
               ))}
             </div>
             
-            <button onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', drops[0]?.id))} className="w-full bg-red-50 text-red-500 py-4 rounded-xl text-xs font-bold mt-10">⚠ DELETE ALL TEST DATA</button>
+            {/* DEBUG DELETE BUTTON */}
+            <button onClick={async () => {
+                const q = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
+                const snap = await import('firebase/firestore').then(mod => mod.getDocs(q));
+                snap.forEach(d => deleteDoc(d.ref));
+                alert("All Test Data Deleted!");
+            }} className="w-full bg-red-100 text-red-600 py-3 rounded-xl text-xs font-bold mt-10">⚠ DELETE ALL TEST DATA</button>
           </div>
         )}
       </main>
