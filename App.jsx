@@ -19,14 +19,13 @@ import {
   Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon, Link as LinkIcon
 } from 'lucide-react';
 
-// --- ROBUST CONFIGURATION LOADER ---
+// --- CONFIGURATION ---
 const getFirebaseConfig = () => {
-  // 1. Try Preview Environment Config
+  // 1. Preview
   if (typeof __firebase_config !== 'undefined') {
     try { return JSON.parse(__firebase_config); } catch (e) { }
   }
-
-  // 2. Try Vite/Vercel Environment Variables
+  // 2. Production
   try {
     const env = import.meta.env || {};
     return {
@@ -42,7 +41,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Safe Initialization
+// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -76,17 +75,23 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Form State (Includes Zelle Link)
+  // Form State (Restored Zelle Link)
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
-  // 1. Auth Logic
+  // 1. Auth
   useEffect(() => {
     if (!popAuth) return;
     const tryLogin = async () => {
        if (!popAuth.currentUser) {
-          try { await signInAnonymously(popAuth); } catch(e) { console.error("Auto-login failed", e); }
+          try { 
+             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(popAuth, __initial_auth_token);
+             } else {
+                await signInAnonymously(popAuth); 
+             }
+          } catch(e) { console.error("Auto-login failed", e); }
        }
     };
     tryLogin();
@@ -112,23 +117,24 @@ const App = () => {
     return () => { uDrops(); uOrders(); };
   }, [user]);
 
-  // --- CRASH PROOF LOGIC: Group Drops ---
+  // --- LOGIC: Group Drops (Safe) ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety Check: If data is missing, skip it to prevent white screen
+      // Safety check
       if (!drop.merchantId) return; 
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          allImages: [...(drop.images || [])],
-          allMenu: [...(drop.menu || [])],
+          // Ensure arrays exist
+          allImages: drop.images ? [...drop.images] : [],
+          allMenu: drop.menu ? [...drop.menu] : [],
           dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
-        // Safely merge arrays even if they are undefined
+        // Merge arrays
         if (drop.images) group.allImages = [...group.allImages, ...drop.images];
         if (drop.menu) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
@@ -136,7 +142,7 @@ const App = () => {
     });
     return Object.values(groups);
   };
-
+  
   const uniqueShops = getUniqueShops();
   
   // Safe Filtering (Prevents crash on empty titles)
@@ -152,7 +158,7 @@ const App = () => {
   const goHome = () => {
     setView('explore');
     setDisplayMode('list');
-    setSearchTerm(""); // Clears search so list reappears
+    setSearchTerm("");
     setSelectedShop(null);
   };
 
@@ -206,6 +212,7 @@ const App = () => {
 
       alert("Spot Published!");
       setView('explore');
+      // Reset form
       setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
@@ -232,10 +239,13 @@ const App = () => {
   };
 
   const openMaps = () => {
+    if (!selectedShop) return;
+    // Uses the Merchant's GPS
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
+    if (!selectedShop) return;
     const nick = encodeURIComponent(selectedShop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
@@ -279,6 +289,7 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
+          // Use filteredShops (All Merchants)
           filteredShops.forEach(shop => {
              if (shop.lat) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
@@ -298,6 +309,7 @@ const App = () => {
          document.head.appendChild(script);
       } else { loadMap(); }
     }, [filteredShops]);
+    
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
