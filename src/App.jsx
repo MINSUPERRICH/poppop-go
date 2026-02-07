@@ -14,7 +14,7 @@ import {
 import { 
   MapPin, User, ShoppingBag, QrCode, ChevronLeft, 
   Plus, X, Map as MapIcon, Grid, ChevronRight, 
-  Loader2, Trash2, Navigation, Search, Camera, LogIn, Share2, CheckCircle2, Check, HelpCircle
+  Loader2, Trash2, Navigation, Search, Camera, LogIn, Share2, CheckCircle2, Check, HelpCircle, Truck
 } from 'lucide-react';
 
 // --- FIREBASE CONFIG ---
@@ -124,7 +124,7 @@ const App = () => {
       {/* HEADER */}
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <div className="flex items-center gap-2">
-           <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter" onClick={() => setView('explore')}>PopPop Go</h1>
+           <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter cursor-pointer" onClick={() => setView('explore')}>PopPop Go</h1>
            <button onClick={() => setShowFAQ(true)} className="text-slate-300 hover:text-indigo-400 transition-colors"><HelpCircle size={18}/></button>
         </div>
         <div className="flex gap-2">
@@ -146,7 +146,7 @@ const App = () => {
               <div className="space-y-4">
                 {drops.filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase())).map(d => (
                   <div key={d.id} onClick={() => { setSelectedDrop(d); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden border border-slate-100 shadow-sm active:scale-95 transition-all">
-                    <img src={d.images[0]} className="h-52 w-full object-cover" />
+                    <img src={d.images[0]} className="h-52 w-full object-cover" alt={d.title} />
                     <div className="p-5 flex justify-between items-center">
                       <div><h3 className="font-bold text-lg tracking-tight">{d.title}</h3><p className="text-xs text-slate-400 flex items-center gap-1 mt-1"><MapPin size={12} className="text-red-500"/> {d.locationName}</p></div>
                       <div className={`p-3 rounded-2xl ${d.type === 'food-truck' ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'}`}>{d.type === 'food-truck' ? <Truck size={20}/> : <ShoppingBag size={20}/>}</div>
@@ -160,7 +160,7 @@ const App = () => {
 
         {view === 'shop-detail' && selectedDrop && (
           <div className="animate-in slide-in-from-right pb-32">
-            <div className="relative h-72"><img src={selectedDrop.images[0]} className="w-full h-full object-cover" /><button onClick={() => setView('explore')} className="absolute top-6 left-6 bg-white p-2 rounded-full shadow-lg"><ChevronLeft /></button></div>
+            <div className="relative h-72"><img src={selectedDrop.images[0]} className="w-full h-full object-cover" alt={selectedDrop.title} /><button onClick={() => setView('explore')} className="absolute top-6 left-6 bg-white p-2 rounded-full shadow-lg"><ChevronLeft /></button></div>
             <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6 shadow-2xl">
               <div className="flex justify-between items-start">
                 <div><h2 className="text-3xl font-black tracking-tighter">{selectedDrop.title}</h2><p className="text-slate-400 text-xs font-bold uppercase mt-1 tracking-widest">{selectedDrop.locationName}</p></div>
@@ -175,7 +175,7 @@ const App = () => {
                 <div className="grid gap-3">
                   {selectedDrop.menu?.filter(i => i.name.toLowerCase().includes(itemSearch.toLowerCase())).map((item, idx) => (
                     <div key={idx} onClick={() => setPreviewItem(item)} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl cursor-pointer active:scale-95 transition-all border border-slate-100">
-                      <div className="flex items-center gap-3"><div className="w-14 h-14 rounded-xl bg-slate-200 overflow-hidden shadow-sm"><img src={item.image} className="w-full h-full object-cover" /></div><span className="font-bold text-slate-800">{item.name}</span></div>
+                      <div className="flex items-center gap-3"><div className="w-14 h-14 rounded-xl bg-slate-200 overflow-hidden shadow-sm"><img src={item.image} className="w-full h-full object-cover" alt={item.name} /></div><span className="font-bold text-slate-800">{item.name}</span></div>
                       <span className="font-black text-indigo-600 bg-white px-3 py-1 rounded-lg border border-indigo-50 shadow-sm">${item.price}</span>
                     </div>
                   ))}
@@ -193,8 +193,8 @@ const App = () => {
                 <button onClick={() => setNewDrop({...newDrop, type:'static'})} className={`flex-1 py-3 rounded-2xl text-xs font-black tracking-widest ${newDrop.type === 'static' ? 'bg-white shadow text-indigo-600' : 'text-slate-400'}`}>POP-UP SHOP</button>
                 <button onClick={() => setNewDrop({...newDrop, type:'food-truck'})} className={`flex-1 py-3 rounded-2xl text-xs font-black tracking-widest ${newDrop.type === 'food-truck' ? 'bg-white shadow text-amber-600' : 'text-slate-400'}`}>FOOD TRUCK</button>
               </div>
-              <label className="block w-full h-40 border-2 border-dashed rounded-[32px] flex flex-col items-center justify-center text-slate-400 border-slate-200 bg-white overflow-hidden active:bg-slate-50 transition-colors">
-                {newDrop.images.length > 0 ? <img src={newDrop.images[0]} className="w-full h-full object-cover" /> : <><Camera size={32} className="text-indigo-200" /> <span className="text-[10px] font-black mt-3 uppercase tracking-widest">Main Store Photo</span></>}
+              <label className="block w-full h-40 border-2 border-dashed rounded-[32px] flex flex-col items-center justify-center text-slate-400 border-slate-200 bg-white overflow-hidden active:bg-slate-50 transition-colors cursor-pointer">
+                {newDrop.images.length > 0 ? <img src={newDrop.images[0]} className="w-full h-full object-cover" alt="preview" /> : <><Camera size={32} className="text-indigo-200" /> <span className="text-[10px] font-black mt-3 uppercase tracking-widest">Main Store Photo</span></>}
                 <input type="file" className="hidden" onChange={async (e) => { const url = await uploadToFirebase(e.target.files[0], 'drops'); setNewDrop({...newDrop, images: [url]}); }} />
               </label>
               <input value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title: e.target.value})} placeholder="Store Name" className="w-full p-5 rounded-3xl border border-slate-100 outline-none font-bold shadow-sm" />
@@ -214,7 +214,7 @@ const App = () => {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Build Your Menu</p>
                 <div className="flex gap-2">
                   <label className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center cursor-pointer border border-slate-100 shrink-0">
-                    {itemImageLoading ? <Loader2 className="w-5 h-5 animate-spin text-indigo-600"/> : menuItemInput.image ? <img src={menuItemInput.image} className="w-full h-full object-cover rounded-2xl"/> : <Camera size={18} className="text-slate-300"/>}
+                    {itemImageLoading ? <Loader2 className="w-5 h-5 animate-spin text-indigo-600"/> : menuItemInput.image ? <img src={menuItemInput.image} className="w-full h-full object-cover rounded-2xl" alt="item"/> : <Camera size={18} className="text-slate-300"/>}
                     <input type="file" className="hidden" onChange={async (e) => { setItemImageLoading(true); try { const url = await uploadToFirebase(e.target.files[0], 'items'); setMenuItemInput({...menuItemInput, image: url}); } finally { setItemImageLoading(false); } }} />
                   </label>
                   <div className="flex-1 space-y-2">
@@ -224,7 +224,7 @@ const App = () => {
                 </div>
                 <button onClick={() => { if(menuItemInput.image && menuItemInput.name) { setNewDrop({...newDrop, menu: [...newDrop.menu, menuItemInput]}); setMenuItemInput({name:'', price:'', image:''}); } else { alert("Photo + Name required!"); } }} className="w-full py-3 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100">Add to Menu</button>
                 <div className="flex flex-wrap gap-2 pt-2">
-                   {newDrop.menu.map((m, i) => <div key={i} className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2">{m.name} <X size={10} onClick={()=>setNewDrop({...newDrop, menu: newDrop.menu.filter((_, idx)=>idx!==i)})}/></div>)}
+                   {newDrop.menu.map((m, i) => <div key={i} className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-bold flex items-center gap-2">{m.name} <X size={10} className="cursor-pointer" onClick={()=>setNewDrop({...newDrop, menu: newDrop.menu.filter((_, idx)=>idx!==i)})}/></div>)}
                 </div>
               </div>
               <button onClick={handlePostDrop} disabled={isPosting} className="w-full bg-slate-900 text-white py-6 rounded-[32px] font-black uppercase tracking-widest flex justify-center shadow-2xl active:scale-95 transition-all">{isPosting ? <Loader2 className="animate-spin"/> : 'Open My Store'}</button>
@@ -233,50 +233,52 @@ const App = () => {
         )}
 
         {view === 'merchant-dash' && (
-         <div className="p-8 space-y-8 pb-32">
-         <div className="flex justify-between items-center">
-         <h2 className="text-3xl font-black italic tracking-tighter">
-          {/* Replace with your real Gmail address */}
-         {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "Admin Panel" : "My Hub"}
-        </h2>
-        <button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button>
-       </div>
+          <div className="p-8 space-y-8 pb-32">
+            <div className="flex justify-between items-center">
+              <h2 className="text-3xl font-black italic tracking-tighter">
+                {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "Admin Panel" : "My Hub"}
+              </h2>
+              <button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button>
+            </div>
 
-       <div className="space-y-4">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-        {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "All Global Active Spots" : "Your Live Spots"}
-      </p>
+            <div className="space-y-4">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "All Global Active Spots" : "Your Live Spots"}
+              </p>
 
-      {/* ADMIN LOGIC: If admin, show everything. If merchant, show only their own pins. */}
-      {drops.filter(d => 
-        user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
-      ).length === 0 && (
-        <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>
-      )}
+              {drops.filter(d => 
+                user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+              ).length === 0 && (
+                <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>
+              )}
 
-      {drops.filter(d => 
-        user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
-      ).map(myDrop => (
-        <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm animate-in">
-          <div className="flex flex-col">
-            <span className="font-bold text-lg leading-none">{myDrop.title}</span>
-            {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" && (
-              <span className="text-[9px] text-indigo-500 font-bold mt-1 uppercase">Owner: {myDrop.merchantId.slice(0,8)}</span>
-            )}
+              {drops.filter(d => 
+                user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+              ).map(myDrop => (
+                <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm animate-in">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-lg leading-none">{myDrop.title}</span>
+                    {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" && (
+                      <span className="text-[9px] text-indigo-500 font-bold mt-1 uppercase">Owner: {myDrop.merchantId.slice(0,8)}</span>
+                    )}
+                  </div>
+                  <button 
+                    onClick={async () => { 
+                      const isAdmin = user?.email === "YOUR_ADMIN_EMAIL@gmail.com";
+                      if(confirm(isAdmin ? "ADMIN: Delete this shop permanently?" : "Delete your spot?")) {
+                        await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); 
+                      }
+                    }} 
+                    className="p-3 bg-red-50 text-red-500 rounded-2xl active:scale-90 transition-transform"
+                  >
+                    <Trash2 size={20}/>
+                  </button>
+                </div>
+              ))}
+              <button onClick={() => setView('post')} className="w-full py-6 border-2 border-dashed border-indigo-100 bg-indigo-50/30 rounded-[32px] text-indigo-600 font-black text-xs uppercase tracking-widest">+ NEW LOCATION</button>
+            </div>
           </div>
-          <button 
-            onClick={async () => { 
-              const isAdmin = user?.email === "YOUR_ADMIN_EMAIL@gmail.com";
-              if(confirm(isAdmin ? "ADMIN: Delete this shop permanently?" : "Delete your spot?")) {
-                await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); 
-              }
-            }} 
-            className="p-3 bg-red-50 text-red-500 rounded-2xl active:scale-90 transition-transform"
-          >
-            <Trash2 size={20}/>
-          </button>
-        </div>
-      ))}
+        )}
       </main>
 
       {/* NAVIGATION */}
@@ -291,7 +293,7 @@ const App = () => {
         <div className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-6 animate-in fade-in duration-300" onClick={() => setPreviewItem(null)}>
           <div className="bg-white rounded-[48px] overflow-hidden max-w-sm w-full shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
             <div className="relative">
-               <img src={previewItem.image} className="w-full h-80 object-cover" />
+               <img src={previewItem.image} className="w-full h-80 object-cover" alt="item-preview" />
                <button onClick={()=>setPreviewItem(null)} className="absolute top-6 right-6 bg-white/20 backdrop-blur-md text-white p-2 rounded-full"><X size={20}/></button>
             </div>
             <div className="p-8 text-center bg-white">
@@ -367,7 +369,5 @@ const App = () => {
     </div>
   );
 };
-
-
 
 export default App;
