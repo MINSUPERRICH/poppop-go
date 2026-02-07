@@ -1,0 +1,24 @@
+{
+  "short_name": "PopPop Go",
+  "name": "PopPop Go: Find Pop-Ups & Trucks",
+  "description": "Real-time map for local food trucks and pop-up shops.",
+  "icons": [
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#4f46e5",
+  "background_color": "#ffffff"
+}
