@@ -19,8 +19,18 @@ import {
   Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon, Link as LinkIcon
 } from 'lucide-react';
 
-// --- CONFIGURATION ---
+// --- UNIVERSAL CONFIGURATION LOADER ---
 const getFirebaseConfig = () => {
+  // 1. Try Preview Environment (This Chat Window)
+  if (typeof __firebase_config !== 'undefined') {
+    try {
+      return JSON.parse(__firebase_config);
+    } catch (e) {
+      console.error("Preview config error", e);
+    }
+  }
+
+  // 2. Try Vite/Vercel Environment (Your Live Website)
   try {
     const env = import.meta.env || {};
     return {
@@ -31,13 +41,16 @@ const getFirebaseConfig = () => {
       messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
       appId: env.VITE_FIREBASE_APP_ID
     };
-  } catch (e) { return {}; }
+  } catch (e) {
+    return {};
+  }
 };
 
 const firebaseConfig = getFirebaseConfig();
 
+// Initialize Firebase Safely
 let popApp, popAuth, popDb, popStorage;
-if (firebaseConfig.apiKey) {
+if (firebaseConfig && firebaseConfig.apiKey) {
   try {
     popApp = initializeApp(firebaseConfig);
     popAuth = getAuth(popApp);
@@ -54,7 +67,7 @@ const App = () => {
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
   const [orders, setOrders] = useState([]); 
-  const [memos, setMemos] = useState([]); // Added specific state for memos
+  const [memos, setMemos] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
@@ -79,42 +92,50 @@ const App = () => {
     if (!popAuth) return;
     const tryLogin = async () => {
        if (!popAuth.currentUser) {
-          try { await signInAnonymously(popAuth); } catch(e) { console.error("Auto-login failed", e); }
+          try { 
+             // Special check for preview token
+             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                 await signInWithCustomToken(popAuth, __initial_auth_token);
+             } else {
+                 await signInAnonymously(popAuth); 
+             }
+          } catch(e) { console.error("Auto-login failed", e); }
        }
     };
     tryLogin();
     return onAuthStateChanged(popAuth, setUser);
   }, []);
 
-  // 2. Data
+  // 2. Data Listeners
   useEffect(() => {
     if (!user || !popDb) return;
     
-    const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-    const uDrops = onSnapshot(dropsQ, 
+    // Drops
+    const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
+    const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
+      (e) => { 
+        console.error("DB Error", e);
+        if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Please Check Firebase Rules"); 
+      }
     );
     
+    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
     );
 
-    // FIXED: Correct Memo Query
+    // Memos
     const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
     const uMemos = onSnapshot(qMemos, 
-      (s) => {
-        const allMemos = s.docs.map(d => ({id: d.id, ...d.data()}));
-        // Filter: Show only memos sent TO me (as merchant)
-        setMemos(allMemos.filter(m => m.merchantId === user.uid)); 
-      }
+      (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
     );
 
     return () => { uDrops(); uOrders(); uMemos(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops ---
+  // --- LOGIC: Group Drops (Safe) ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
@@ -123,21 +144,21 @@ const App = () => {
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
+          // Fallbacks for missing data
           title: drop.title || "Unknown Shop",
           locationName: drop.locationName || "No Location",
-          lat: drop.lat || 0,
-          lng: drop.lng || 0,
           allImages: Array.isArray(drop.images) ? [...drop.images] : [],
           allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
+        // Safely merge
         if (Array.isArray(drop.images)) group.allImages = [...group.allImages, ...drop.images];
         if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
         
-        // Update to latest location
+        // Update to latest info
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
             group.title = drop.title;
             group.locationName = drop.locationName;
@@ -161,10 +182,10 @@ const App = () => {
   // --- ACTIONS ---
 
   const goHome = () => {
-    setSearchTerm("");
-    setDisplayMode('list');
-    setSelectedShop(null);
     setView('explore');
+    setDisplayMode('list');
+    setSearchTerm("");
+    setSelectedShop(null);
   };
 
   const handlePaymentNotify = async () => {
@@ -195,10 +216,8 @@ const App = () => {
     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
-  // --- FIXED: GEOCODING ---
   const getCoordinatesFromAddress = async (address) => {
     try {
-      // Use Nominatim OpenStreetMap API
       const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
       const data = await response.json();
       if (data && data.length > 0) {
@@ -214,26 +233,20 @@ const App = () => {
 
     setIsPosting(true);
     try {
-      let lat = 0; let lng = 0; 
-
-      // 1. Try Address First (Higher Priority)
-      const addressCoords = await getCoordinatesFromAddress(newDrop.locationName);
+      let lat = 40.7128; let lng = -74.0060; 
       
+      // Try Address First
+      const addressCoords = await getCoordinatesFromAddress(newDrop.locationName);
       if (addressCoords) {
          lat = addressCoords.lat;
          lng = addressCoords.lng;
       } else {
-         // 2. Fallback to GPS
+         // Fallback GPS
          try {
            const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
            lat = pos.coords.latitude;
            lng = pos.coords.longitude;
          } catch (e) { console.log("GPS Defaulting"); }
-      }
-
-      // If still 0, warn user but allow post (Map pin will be at 0,0)
-      if (lat === 0 && lng === 0) {
-         alert("Warning: Could not find location. Map pin may be inaccurate.");
       }
 
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
@@ -271,23 +284,12 @@ const App = () => {
   };
 
   const openMaps = () => {
-    // Uses Exact Coordinates saved from Geocoding
-    if (selectedShop.lat && selectedShop.lng) {
-       window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
-    } else {
-       // Fallback to text search
-       window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedShop.locationName)}`, '_blank');
-    }
+    window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
     const nick = encodeURIComponent(selectedShop.title);
-    if (selectedShop.lat && selectedShop.lng) {
-       window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
-    } else {
-       // Fallback
-       window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${encodeURIComponent(selectedShop.locationName)}&dropoff[nickname]=${nick}`, '_blank');
-    }
+    window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
 
   const shareToSocial = async () => {
@@ -301,22 +303,17 @@ const App = () => {
     if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
-  // FIXED: Messenger Function
   const handleSendMessage = async () => {
     if (!msgInput.trim()) return;
-    if (!selectedShop || !selectedShop.merchantId) {
-        alert("Error: Cannot find merchant ID.");
-        return;
-    }
     try {
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
         merchantId: selectedShop.merchantId,
-        dropTitle: selectedShop.title || "Inquiry",
+        dropTitle: selectedShop.title,
         text: msgInput,
         senderId: user.uid,
         createdAt: serverTimestamp()
       });
-      alert("Message Sent!");
+      alert("Message Sent to Merchant!");
       setMsgInput("");
     } catch (e) { alert("Send failed: " + e.message); }
   };
@@ -336,7 +333,6 @@ const App = () => {
           
           const markers = [];
           filteredShops.forEach(shop => {
-             // Only map shops with valid coordinates
              if (shop.lat && shop.lng && shop.lat !== 0) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
                  marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
@@ -345,7 +341,6 @@ const App = () => {
              }
           });
           
-          // Fit bounds to show ALL markers
           if (markers.length > 0) {
              const bounds = window.L.latLngBounds(markers);
              map.fitBounds(bounds, { padding: [50, 50] });
@@ -366,7 +361,7 @@ const App = () => {
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
-  if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
+  if (!firebaseConfig || !firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error: Missing Keys</div>;
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans max-w-md mx-auto border-x border-slate-200 relative overflow-hidden text-slate-900">
@@ -387,7 +382,6 @@ const App = () => {
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
           {orders.filter(o => o.merchantId === user?.uid && o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
-          {memos.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
         </div>
       </header>
