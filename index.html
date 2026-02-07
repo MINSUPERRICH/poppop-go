@@ -32,15 +32,13 @@
         padding: 0;
         font-family: 'Inter', sans-serif;
         background-color: #f8fafc;
-        /* Disables bounce-back effect on iOS for a smoother Map experience */
         overscroll-behavior-y: contain;
         -webkit-tap-highlight-color: transparent;
       }
-      /* Pre-styling the map container */
       #map-el {
         background: #e2e8f0;
       }
-      /* Custom styling for Leaflet Popups to match your UI */
+      /* Custom styling for Leaflet Popups */
       .leaflet-popup-content-wrapper {
         border-radius: 20px !important;
         padding: 5px !important;
@@ -53,6 +51,7 @@
   </head>
   <body>
     <div id="root"></div>
+    
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
