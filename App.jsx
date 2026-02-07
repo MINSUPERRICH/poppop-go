@@ -36,6 +36,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
+// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -90,14 +91,12 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
-    // Drops
-    const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-    const uDrops = onSnapshot(qDrops, 
+    const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
+    const uDrops = onSnapshot(dropsQ, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
@@ -109,32 +108,30 @@ const App = () => {
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety check for bad data
-      if (!drop.merchantId || !drop.id) return;
+      if (!drop.merchantId) return;
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
           title: drop.title || "Unknown Shop",
-          locationName: drop.locationName || "Location N/A",
+          locationName: drop.locationName || "No Location",
           allImages: Array.isArray(drop.images) ? [...drop.images] : [],
           allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
-        // Safely merge arrays
+        // Safely merge
         if (Array.isArray(drop.images)) group.allImages = [...group.allImages, ...drop.images];
         if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
         
-        // Update to latest location/title if newer
+        // Update to latest location/title/zelle info if newer
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
             group.title = drop.title;
             group.locationName = drop.locationName;
             group.lat = drop.lat;
             group.lng = drop.lng;
-            // Also take the latest Zelle info
             if (drop.zelleLink) group.zelleLink = drop.zelleLink;
             if (drop.zelleQrUrl) group.zelleQrUrl = drop.zelleQrUrl;
         }
@@ -142,12 +139,9 @@ const App = () => {
     });
     return Object.values(groups);
   };
-
   const uniqueShops = getUniqueShops();
-  
-  // Safe Filtering
   const filteredShops = uniqueShops.filter(shop => {
-    const term = (searchTerm || "").toLowerCase();
+    const term = searchTerm.toLowerCase();
     const t = (shop.title || "").toLowerCase();
     const l = (shop.locationName || "").toLowerCase();
     return t.includes(term) || l.includes(term);
@@ -156,10 +150,10 @@ const App = () => {
   // --- ACTIONS ---
 
   const goHome = () => {
-    setSearchTerm("");
-    setDisplayMode('list');
-    setSelectedShop(null);
     setView('explore');
+    setDisplayMode('list');
+    setSearchTerm("");
+    setSelectedShop(null);
   };
 
   const handlePaymentNotify = async () => {
@@ -190,6 +184,19 @@ const App = () => {
     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
+  // --- ADDRESS CONVERTER ---
+  const getCoordinatesFromAddress = async (address) => {
+    try {
+      // Free OpenStreetMap Geocoding
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+      const data = await response.json();
+      if (data && data.length > 0) {
+        return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      }
+    } catch (e) { console.error("Geocoding failed", e); }
+    return null;
+  };
+
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add at least 1 item photo."); return; }
@@ -197,11 +204,21 @@ const App = () => {
     setIsPosting(true);
     try {
       let lat = 40.7128; let lng = -74.0060; 
-      try {
-        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
-        lat = pos.coords.latitude;
-        lng = pos.coords.longitude;
-      } catch (e) { console.log("GPS Defaulting"); }
+
+      // 1. Try Address First
+      const addressCoords = await getCoordinatesFromAddress(newDrop.locationName);
+      
+      if (addressCoords) {
+         lat = addressCoords.lat;
+         lng = addressCoords.lng;
+      } else {
+         // 2. Fallback to GPS if address fails
+         try {
+           const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
+           lat = pos.coords.latitude;
+           lng = pos.coords.longitude;
+         } catch (e) { console.log("GPS Defaulting"); }
+      }
 
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
         ...newDrop,
@@ -212,6 +229,7 @@ const App = () => {
 
       alert("Spot Published!");
       setView('explore');
+      // Reset
       setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
@@ -238,6 +256,7 @@ const App = () => {
   };
 
   const openMaps = () => {
+    // Maps query uses EXACT lat/lng saved
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
@@ -295,11 +314,12 @@ const App = () => {
              }
           });
           
-          // Auto-Fit Map to show all pins
+          // MAP FIX: Prioritize Showing PINS, not User
           if (markers.length > 0) {
-            const bounds = window.L.latLngBounds(markers);
-            map.fitBounds(bounds, { padding: [50, 50] });
+             const bounds = window.L.latLngBounds(markers);
+             map.fitBounds(bounds, { padding: [50, 50] });
           } else {
+             // Only center on user if NO shops exist
              navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
           }
       };
@@ -547,12 +567,12 @@ const App = () => {
               ))}
             </div>
             
-            {/* DEBUG DELETE BUTTON */}
+            {/* DEBUG DELETE BUTTON (Remove after testing) */}
             <button onClick={async () => {
                 const q = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
                 const snap = await import('firebase/firestore').then(mod => mod.getDocs(q));
                 snap.forEach(d => deleteDoc(d.ref));
-                alert("All Test Data Deleted!");
+                alert("All Test Data Deleted! Refresh app.");
             }} className="w-full bg-red-100 text-red-600 py-3 rounded-xl text-xs font-bold mt-10">⚠ DELETE ALL TEST DATA</button>
           </div>
         )}
