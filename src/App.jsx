@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { MapPin, User, ShoppingBag, QrCode, ChevronLeft, Plus, X, Map as MapIcon, Grid, Navigation, Search, Camera, LogIn, Clock, Calendar, ChevronRight, Loader2, Trash2, CheckCircle2 } from 'lucide-react';
+import { MapPin, User, ShoppingBag, QrCode, ChevronLeft, Plus, X, Map as MapIcon, Grid, Navigation, Search, Camera, LogIn, Clock, Calendar, ChevronRight, Loader2, Trash2, CheckCircle2, RefreshCw } from 'lucide-react';
 
 // --- FIREBASE CONFIG (Kept from your original) ---
 const firebaseConfig = {
@@ -22,10 +22,12 @@ const popStorage = getStorage(popApp);
 const APP_PATH = "poppop-go-live";
 
 const App = () => {
-  const MY_ADMIN_EMAIL = "YOUR_ADMIN_EMAIL@gmail.com";
+  // --- 👑 ADMIN CONFIG ---
+  const MY_ADMIN_EMAIL = "yooeuchan@gmail.com";
+
   const [user, setUser] = useState(null);
   const [view, setView] = useState('explore'); 
-  const [displayMode, setDisplayMode] = useState('list'); // 'list' or 'map'
+  const [displayMode, setDisplayMode] = useState('list'); 
   const [sortBy, setSortBy] = useState('newest'); 
   const [drops, setDrops] = useState([]);
   const [selectedDrop, setSelectedDrop] = useState(null);
@@ -69,9 +71,23 @@ const App = () => {
         ...newDrop, merchantId: user.uid, lat: pos.coords.latitude, lng: pos.coords.longitude, createdAt: serverTimestamp(),
       });
       setView('explore');
-      setNewDrop({ title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [], closesAt: '', eventDate: '' });
+      setNewDrop({ title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [], closesAt: '', eventDate: new Date().toISOString().split('T')[0] });
     } catch (e) { alert("GPS Access Required to Post."); }
     finally { setIsPosting(false); }
+  };
+
+  const updateLocation = async (dropId) => {
+    if(!confirm("Update this shop's location to your current GPS spot?")) return;
+    try {
+      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej));
+      const dropRef = doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId);
+      await updateDoc(dropRef, {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        updatedAt: serverTimestamp()
+      });
+      alert("Location updated successfully!");
+    } catch (e) { alert("Enable GPS to update location."); }
   };
 
   const FullMapView = () => {
@@ -125,8 +141,6 @@ const App = () => {
             <div className="flex gap-2 overflow-x-auto scrollbar-hide py-1">
                 {['newest', 'date', 'city'].map(s => (
                     <button key={s} onClick={() => setSortBy(s)} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${sortBy === s ? 'bg-slate-900 text-white border-slate-900 shadow-xl' : 'bg-white text-slate-400 border-slate-200'}`}>
-                        {s === 'newest' && <Clock size={12} className="inline mr-2"/>}
-                        {s === 'date' && <Calendar size={12} className="inline mr-2"/>}
                         {s}
                     </button>
                 ))}
@@ -240,12 +254,16 @@ const App = () => {
             <div className="space-y-4">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">{isAdmin ? "Global Listings" : "Your Listings"}</p>
               {drops.filter(d => isAdmin ? true : d.merchantId === user?.uid).map(myDrop => (
-                <div key={myDrop.id} className="bg-white p-5 rounded-[28px] border border-slate-100 flex items-center justify-between shadow-sm">
-                  <div className="flex items-center gap-4">
-                    <img src={myDrop.images[0]} className="w-14 h-14 rounded-xl object-cover" />
-                    <div><span className="font-black text-lg block leading-none">{myDrop.title}</span><span className="text-[10px] text-slate-400 font-bold uppercase">{myDrop.locationName.split(',')[0]}</span></div>
+                <div key={myDrop.id} className="bg-white p-5 rounded-[28px] border border-slate-100 space-y-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <img src={myDrop.images[0]} className="w-14 h-14 rounded-xl object-cover" />
+                        <div><span className="font-black text-lg block leading-none">{myDrop.title}</span><span className="text-[10px] text-slate-400 font-bold uppercase">{myDrop.locationName.split(',')[0]}</span></div>
+                    </div>
+                    <button onClick={async () => { if(confirm("Delete Listing?")) await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); }} className="p-3 bg-red-50 text-red-500 rounded-2xl"><Trash2 size={20}/></button>
                   </div>
-                  <button onClick={async () => { if(confirm("Delete Listing?")) await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); }} className="p-3 bg-red-50 text-red-500 rounded-2xl"><Trash2 size={20}/></button>
+                  {/* NEW RELOCATION BUTTON */}
+                  <button onClick={() => updateLocation(myDrop.id)} className="w-full py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-[10px] uppercase flex items-center justify-center gap-2 border border-indigo-100 active:bg-indigo-600 active:text-white transition-all"><RefreshCw size={14}/> I am currently here (Update GPS)</button>
                 </div>
               ))}
               <button onClick={() => setView('post')} className="w-full py-6 border-2 border-dashed border-indigo-100 bg-indigo-50/20 rounded-[32px] text-indigo-600 font-black text-xs uppercase tracking-widest">+ NEW LISTING</button>
@@ -254,7 +272,6 @@ const App = () => {
         )}
       </main>
 
-      {/* NAVIGATION - Premium Floating Design */}
       <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-slate-900/90 backdrop-blur-2xl rounded-[35px] py-4 px-10 flex justify-between items-center z-[100] shadow-2xl border border-white/10">
         <button onClick={() => { setView('explore'); setDisplayMode('list'); }} className={view === 'explore' ? 'text-white' : 'text-white/30'}><Grid size={24}/></button>
         <button onClick={() => { if(!user) handleLogin(); else setView('post'); }} className="bg-indigo-600 text-white p-6 rounded-[30px] shadow-2xl shadow-indigo-500/40 -mt-16 active:scale-90 transition-transform"><Plus size={32}/></button>
