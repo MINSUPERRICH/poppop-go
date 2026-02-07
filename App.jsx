@@ -21,11 +21,6 @@ import {
 
 // --- CONFIGURATION ---
 const getFirebaseConfig = () => {
-  // 1. Preview
-  if (typeof __firebase_config !== 'undefined') {
-    try { return JSON.parse(__firebase_config); } catch (e) { }
-  }
-  // 2. Production
   try {
     const env = import.meta.env || {};
     return {
@@ -41,7 +36,6 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -75,7 +69,7 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Form State (Restored Zelle Link)
+  // Form State
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
@@ -85,13 +79,7 @@ const App = () => {
     if (!popAuth) return;
     const tryLogin = async () => {
        if (!popAuth.currentUser) {
-          try { 
-             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(popAuth, __initial_auth_token);
-             } else {
-                await signInAnonymously(popAuth); 
-             }
-          } catch(e) { console.error("Auto-login failed", e); }
+          try { await signInAnonymously(popAuth); } catch(e) { console.error("Auto-login failed", e); }
        }
     };
     tryLogin();
@@ -102,14 +90,12 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
-    // Drops
-    const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-    const uDrops = onSnapshot(qDrops, 
-      (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
+    const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
+    const uDrops = onSnapshot(dropsQ, 
+      (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()}))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
-    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
@@ -117,77 +103,58 @@ const App = () => {
     return () => { uDrops(); uOrders(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops (Safe) ---
+  // --- LOGIC: Group Drops (CRASH PROOF) ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety check
-      if (!drop.merchantId) return; 
+      // 1. Skip bad data (Missing ID or Title)
+      if (!drop.merchantId || !drop.id) return;
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          // Ensure arrays exist
-          allImages: drop.images ? [...drop.images] : [],
-          allMenu: drop.menu ? [...drop.menu] : [],
+          title: drop.title || "Unknown Shop", // Fallback text
+          locationName: drop.locationName || "No Location", // Fallback text
+          allImages: Array.isArray(drop.images) ? [...drop.images] : [],
+          allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
-        // Merge arrays
-        if (drop.images) group.allImages = [...group.allImages, ...drop.images];
-        if (drop.menu) group.allMenu = [...group.allMenu, ...drop.menu];
+        // Safely merge arrays
+        if (Array.isArray(drop.images)) group.allImages = [...group.allImages, ...drop.images];
+        if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
+        
+        // Update to latest location/title if newer
+        if (drop.createdAt?.seconds > group.createdAt?.seconds) {
+            group.title = drop.title;
+            group.locationName = drop.locationName;
+            group.lat = drop.lat;
+            group.lng = drop.lng;
+        }
       }
     });
     return Object.values(groups);
   };
-  
+
   const uniqueShops = getUniqueShops();
   
-  // Safe Filtering (Prevents crash on empty titles)
+  // Safe Filtering
   const filteredShops = uniqueShops.filter(shop => {
     const term = searchTerm.toLowerCase();
-    const t = (shop.title || "").toLowerCase();
-    const l = (shop.locationName || "").toLowerCase();
+    const t = String(shop.title).toLowerCase();
+    const l = String(shop.locationName).toLowerCase();
     return t.includes(term) || l.includes(term);
   });
 
   // --- ACTIONS ---
 
   const goHome = () => {
+    setSearchTerm(""); 
     setView('explore');
     setDisplayMode('list');
-    setSearchTerm("");
     setSelectedShop(null);
-  };
-
-  const handlePaymentNotify = async () => {
-    try {
-      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'), {
-        merchantId: selectedShop.merchantId,
-        shopTitle: selectedShop.title,
-        buyerId: user.uid,
-        status: 'pending',
-        timestamp: serverTimestamp(),
-        details: "Zelle Payment Reported"
-      });
-      setShowPayment(false);
-      alert("Merchant Notified!");
-    } catch (e) { alert("Error: " + e.message); }
-  };
-
-  const handleVerifyOrder = async (orderId) => {
-    try {
-      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), { status: 'verified' });
-    } catch (e) { alert("Only the merchant can verify this."); }
-  };
-
-  const deleteItemFromShop = async (dropId, itemIndex) => {
-    const drop = drops.find(d => d.id === dropId);
-    if (!drop) return;
-    const newMenu = drop.menu ? drop.menu.filter((_, i) => i !== itemIndex) : [];
-    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
   const handlePostDrop = async () => {
@@ -212,7 +179,6 @@ const App = () => {
 
       alert("Spot Published!");
       setView('explore');
-      // Reset form
       setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
@@ -239,13 +205,10 @@ const App = () => {
   };
 
   const openMaps = () => {
-    if (!selectedShop) return;
-    // Uses the Merchant's GPS
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
-    if (!selectedShop) return;
     const nick = encodeURIComponent(selectedShop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
@@ -289,7 +252,6 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
-          // Use filteredShops (All Merchants)
           filteredShops.forEach(shop => {
              if (shop.lat) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
@@ -321,7 +283,7 @@ const App = () => {
       {errorMsg && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"><div className="bg-white p-6 rounded-2xl text-center"><p className="text-red-600 font-bold mb-4">{errorMsg}</p><button onClick={()=>setErrorMsg(null)} className="bg-black text-white px-6 py-2 rounded-xl">OK</button></div></div>}
 
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
-        <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
+        <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter" onClick={goHome}>PopPop Go</h1>
         <div className="flex gap-2">
           <button 
             onClick={() => {
@@ -352,7 +314,7 @@ const App = () => {
                       <div className="flex gap-1 mb-1">
                           {shop.type==='food-truck' && <span className="bg-amber-100 text-amber-600 text-[8px] font-black px-2 py-0.5 rounded-md">TRUCK</span>}
                           {shop.hasCoupon && <span className="bg-pink-100 text-pink-600 text-[8px] font-black px-2 py-0.5 rounded-md">10% OFF</span>}
-                          {shop.allImages?.length > 1 && <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-md">+{shop.allImages.length} ITEMS</span>}
+                          {shop.allImages.length > 1 && <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-md">+{shop.allImages.length} ITEMS</span>}
                       </div>
                       <h3 className="font-bold text-lg">{shop.title}</h3>
                       <p className="text-xs text-slate-400 font-bold italic flex items-center gap-1"><MapPin className="w-3 h-3 text-red-500"/> {shop.locationName}</p>
@@ -523,25 +485,9 @@ const App = () => {
                        <button className="text-red-400 text-xs font-bold" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}>Delete Spot</button>
                      </div>
                    </div>
-                   {/* Item Delete List */}
-                   <div className="space-y-1">
-                     {myDrop.menu?.map((item, idx) => (
-                       <div key={idx} className="flex justify-between items-center text-xs p-2 bg-slate-50 rounded-lg">
-                         <span>{item.name}</span>
-                         <X className="w-4 h-4 text-slate-300 cursor-pointer" onClick={() => deleteItemFromShop(myDrop.id, idx)} />
-                       </div>
-                     ))}
-                   </div>
                  </div>
                ))}
                <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
-            </div>
-            
-            <div className="space-y-4 pt-6 border-t border-slate-100">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
-              {memos.length === 0 ? <div className="text-center text-slate-300 italic text-sm">No messages.</div> : memos.map(m => (
-                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
-              ))}
             </div>
           </div>
         )}
