@@ -19,8 +19,14 @@ import {
   Car, AlertCircle, Camera, Check, Info, Home, Copy, DollarSign, Image as ImageIcon, Link as LinkIcon
 } from 'lucide-react';
 
-// --- CONFIGURATION ---
+// --- ROBUST CONFIGURATION LOADER ---
 const getFirebaseConfig = () => {
+  // 1. Try Preview Environment Config
+  if (typeof __firebase_config !== 'undefined') {
+    try { return JSON.parse(__firebase_config); } catch (e) { }
+  }
+
+  // 2. Try Vite/Vercel Environment Variables
   try {
     const env = import.meta.env || {};
     return {
@@ -36,7 +42,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
+// Safe Initialization
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -70,12 +76,12 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Added zelleLink to state
+  // Form State (Includes Zelle Link)
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
-  // 1. Auth
+  // 1. Auth Logic
   useEffect(() => {
     if (!popAuth) return;
     const tryLogin = async () => {
@@ -87,7 +93,7 @@ const App = () => {
     return onAuthStateChanged(popAuth, setUser);
   }, []);
 
-  // 2. Data
+  // 2. Data Listeners
   useEffect(() => {
     if (!user || !popDb) return;
     
@@ -106,12 +112,12 @@ const App = () => {
     return () => { uDrops(); uOrders(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops (Safe) ---
+  // --- CRASH PROOF LOGIC: Group Drops ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety check: skip bad data
-      if (!drop.merchantId) return;
+      // Safety Check: If data is missing, skip it to prevent white screen
+      if (!drop.merchantId) return; 
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
@@ -122,22 +128,33 @@ const App = () => {
         };
       } else {
         const group = groups[drop.merchantId];
-        group.allImages = [...group.allImages, ...(drop.images || [])];
-        group.allMenu = [...group.allMenu, ...(drop.menu || [])];
+        // Safely merge arrays even if they are undefined
+        if (drop.images) group.allImages = [...group.allImages, ...drop.images];
+        if (drop.menu) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
       }
     });
     return Object.values(groups);
   };
+
   const uniqueShops = getUniqueShops();
+  
+  // Safe Filtering (Prevents crash on empty titles)
   const filteredShops = uniqueShops.filter(shop => {
     const term = searchTerm.toLowerCase();
-    const t = shop.title || "";
-    const l = shop.locationName || "";
-    return t.toLowerCase().includes(term) || l.toLowerCase().includes(term);
+    const t = (shop.title || "").toLowerCase();
+    const l = (shop.locationName || "").toLowerCase();
+    return t.includes(term) || l.includes(term);
   });
 
   // --- ACTIONS ---
+
+  const goHome = () => {
+    setView('explore');
+    setDisplayMode('list');
+    setSearchTerm(""); // Clears search so list reappears
+    setSelectedShop(null);
+  };
 
   const handlePaymentNotify = async () => {
     try {
@@ -234,10 +251,19 @@ const App = () => {
     if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
-  const goHome = () => {
-    setView('explore');
-    setDisplayMode('list');
-    setSelectedShop(null);
+  const handleSendMessage = async () => {
+    if (!msgInput.trim()) return;
+    try {
+      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
+        merchantId: selectedShop.merchantId,
+        dropTitle: selectedShop.title,
+        text: msgInput,
+        senderId: user.uid,
+        createdAt: serverTimestamp()
+      });
+      alert("Message Sent to Merchant!");
+      setMsgInput("");
+    } catch (e) { alert("Send failed: " + e.message); }
   };
 
   // Map Component
@@ -272,7 +298,6 @@ const App = () => {
          document.head.appendChild(script);
       } else { loadMap(); }
     }, [filteredShops]);
-    
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
@@ -315,7 +340,7 @@ const App = () => {
                       <div className="flex gap-1 mb-1">
                           {shop.type==='food-truck' && <span className="bg-amber-100 text-amber-600 text-[8px] font-black px-2 py-0.5 rounded-md">TRUCK</span>}
                           {shop.hasCoupon && <span className="bg-pink-100 text-pink-600 text-[8px] font-black px-2 py-0.5 rounded-md">10% OFF</span>}
-                          {shop.allImages.length > 1 && <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-md">+{shop.allImages.length} ITEMS</span>}
+                          {shop.allImages?.length > 1 && <span className="bg-slate-100 text-slate-500 text-[8px] font-black px-2 py-0.5 rounded-md">+{shop.allImages.length} ITEMS</span>}
                       </div>
                       <h3 className="font-bold text-lg">{shop.title}</h3>
                       <p className="text-xs text-slate-400 font-bold italic flex items-center gap-1"><MapPin className="w-3 h-3 text-red-500"/> {shop.locationName}</p>
@@ -330,7 +355,7 @@ const App = () => {
         {view === 'shop-detail' && selectedShop && (
           <div className="pb-40 bg-white min-h-screen animate-in slide-in-from-right">
             <div className="relative h-80 flex overflow-x-auto snap-x scrollbar-hide bg-black">
-              {selectedShop.allImages?.map((img, i) => <img key={i} src={img} className="w-full h-full object-contain snap-center shrink-0" />)}
+              {selectedShop.allImages?.filter(Boolean).map((img, i) => <img key={i} src={img} className="w-full h-full object-contain snap-center shrink-0" />)}
               <button onClick={() => setView('explore')} className="absolute top-12 left-6 bg-white/90 p-3 rounded-full shadow-lg"><ChevronLeft /></button>
             </div>
             
