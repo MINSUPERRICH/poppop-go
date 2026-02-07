@@ -33,10 +33,11 @@ const popDb = getFirestore(popApp);
 const popStorage = getStorage(popApp);
 const APP_PATH = "poppop-go-live";
 
-// CHANGE THIS TO YOUR ACTUAL GMAIL
-const ADMIN_EMAIL = "yooeuchan@gmail.com";
-
 const App = () => {
+  // --- 👑 ADMIN CONFIGURATION ---
+  // Change this to your actual gmail address (lowercase)
+  const MY_ADMIN_EMAIL = "YOOEUCHAN@gmail.com";
+
   const [user, setUser] = useState(null);
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
@@ -56,6 +57,8 @@ const App = () => {
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [], closesAt: '' 
   });
+
+  const isAdmin = user?.email?.toLowerCase() === MY_ADMIN_EMAIL.toLowerCase();
 
   useEffect(() => {
     return onAuthStateChanged(popAuth, (u) => setUser(u));
@@ -258,35 +261,30 @@ const App = () => {
           <div className="p-8 space-y-8 pb-32">
             <div className="flex justify-between items-center">
               <h2 className="text-3xl font-black italic tracking-tighter">
-                {user?.email === ADMIN_EMAIL ? "Admin Panel" : "My Hub"}
+                {isAdmin ? "Admin Panel" : "My Hub"}
               </h2>
               <button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button>
             </div>
 
             <div className="space-y-4">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                {user?.email === ADMIN_EMAIL ? "All Global Active Spots" : "Your Live Spots"}
+                {isAdmin ? "All Global Active Spots" : "Your Live Spots"}
               </p>
 
-              {drops.filter(d => 
-                user?.email === ADMIN_EMAIL ? true : d.merchantId === user?.uid
-              ).length === 0 && (
+              {drops.filter(d => isAdmin ? true : d.merchantId === user?.uid).length === 0 && (
                 <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>
               )}
 
-              {drops.filter(d => 
-                user?.email === ADMIN_EMAIL ? true : d.merchantId === user?.uid
-              ).map(myDrop => (
+              {drops.filter(d => isAdmin ? true : d.merchantId === user?.uid).map(myDrop => (
                 <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm animate-in">
                   <div className="flex flex-col">
                     <span className="font-bold text-lg leading-none">{myDrop.title}</span>
-                    {user?.email === ADMIN_EMAIL && (
+                    {isAdmin && (
                       <span className="text-[9px] text-indigo-500 font-bold mt-1 uppercase">Owner: {myDrop.merchantId.slice(0,8)}</span>
                     )}
                   </div>
                   <button 
                     onClick={async () => { 
-                      const isAdmin = user?.email === ADMIN_EMAIL;
                       if(confirm(isAdmin ? "ADMIN: Delete this shop permanently?" : "Delete your spot?")) {
                         await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); 
                       }
