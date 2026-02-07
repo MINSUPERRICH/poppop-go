@@ -31,7 +31,7 @@ const popApp = initializeApp(firebaseConfig);
 const popAuth = getAuth(popApp);
 const popDb = getFirestore(popApp);
 const popStorage = getStorage(popApp);
-const APP_PATH = "poppop-go-production";
+const APP_PATH = "poppop-go-live";
 
 const App = () => {
   const [user, setUser] = useState(null);
@@ -337,3 +337,4 @@ const App = () => {
 };
 
 export default App;
+
