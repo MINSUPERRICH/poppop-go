@@ -36,6 +36,7 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
+// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -53,7 +54,7 @@ const App = () => {
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
-  const [orders, setOrders] = useState([]); 
+  const [memos, setMemos] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
@@ -69,12 +70,11 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Form State
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
 
-  // 1. Auth
+  // 1. Auth & Auto-Retry
   useEffect(() => {
     if (!popAuth) return;
     const tryLogin = async () => {
@@ -86,7 +86,7 @@ const App = () => {
     return onAuthStateChanged(popAuth, setUser);
   }, []);
 
-  // 2. Data
+  // 2. Data Listeners
   useEffect(() => {
     if (!user || !popDb) return;
     
@@ -94,52 +94,60 @@ const App = () => {
     const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
+      (e) => { 
+        console.error("Firestore Error", e);
+        if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); 
+      }
     );
     
-    // Orders
-    const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
-    const uOrders = onSnapshot(qOrders, 
-      (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
+    // Memos (Messages)
+    const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
+    const uMemos = onSnapshot(qMemos, 
+      (s) => setMemos(s.docs.map(d => ({id: d.id, ...d.data()})).filter(m => m.merchantId === user.uid))
     );
-    return () => { uDrops(); uOrders(); };
+    return () => { uDrops(); uMemos(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops (Safe) ---
+  // --- LOGIC: Group Drops (Crash Proof) ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
-      // Safety check
-      if (!drop.merchantId) return;
+      // Safety Check
+      if (!drop || !drop.merchantId) return;
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          // Prioritize drop location
-          lat: drop.lat, 
-          lng: drop.lng,
-          allImages: drop.images ? [...drop.images] : [],
-          allMenu: drop.menu ? [...drop.menu] : [],
+          title: drop.title || "Unknown Shop",
+          locationName: drop.locationName || "No Location",
+          allImages: Array.isArray(drop.images) ? [...drop.images] : [],
+          allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
         };
       } else {
         const group = groups[drop.merchantId];
-        // Update location if this drop is newer
+        // Safely merge arrays
+        if (Array.isArray(drop.images)) group.allImages = [...group.allImages, ...drop.images];
+        if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
+        group.dropIds.push(drop.id);
+        
+        // Update to latest location info if newer
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
            group.lat = drop.lat;
            group.lng = drop.lng;
            group.locationName = drop.locationName;
+           group.title = drop.title;
         }
-        if (drop.images) group.allImages = [...group.allImages, ...drop.images];
-        if (drop.menu) group.allMenu = [...group.allMenu, ...drop.menu];
-        group.dropIds.push(drop.id);
       }
     });
     return Object.values(groups);
   };
+
   const uniqueShops = getUniqueShops();
+  
+  // Safe Filtering
   const filteredShops = uniqueShops.filter(shop => {
-    const term = searchTerm.toLowerCase();
+    const term = (searchTerm || "").toLowerCase();
     const t = (shop.title || "").toLowerCase();
     const l = (shop.locationName || "").toLowerCase();
     return t.includes(term) || l.includes(term);
@@ -148,56 +156,25 @@ const App = () => {
   // --- ACTIONS ---
 
   const goHome = () => {
-    setView('explore');
-    setDisplayMode('list');
     setSearchTerm("");
+    setDisplayMode('list');
     setSelectedShop(null);
+    setView('explore');
   };
 
-  const handlePaymentNotify = async () => {
+  const handleSendMessage = async () => {
+    if (!msgInput.trim()) return;
     try {
-      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'), {
+      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
         merchantId: selectedShop.merchantId,
-        shopTitle: selectedShop.title,
-        buyerId: user.uid,
-        status: 'pending',
-        timestamp: serverTimestamp(),
-        details: "Zelle Payment Reported"
+        dropTitle: selectedShop.title || "Shop Query",
+        text: msgInput,
+        senderId: user.uid,
+        createdAt: serverTimestamp()
       });
-      setShowPayment(false);
-      alert("Merchant Notified!");
-    } catch (e) { alert("Error: " + e.message); }
-  };
-
-  const handleVerifyOrder = async (orderId) => {
-    try {
-      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders', orderId), { status: 'verified' });
-    } catch (e) { alert("Only the merchant can verify this."); }
-  };
-
-  const deleteItemFromShop = async (dropId, itemIndex) => {
-    const drop = drops.find(d => d.id === dropId);
-    if (!drop) return;
-    const newMenu = drop.menu ? drop.menu.filter((_, i) => i !== itemIndex) : [];
-    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
-  };
-
-  // --- NEW: GEOCODING LOGIC ---
-  const getCoordinatesFromAddress = async (address) => {
-    try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
-      const data = await response.json();
-      if (data && data.length > 0) {
-        return {
-          lat: parseFloat(data[0].lat),
-          lng: parseFloat(data[0].lon)
-        };
-      }
-      return null;
-    } catch (e) {
-      console.error("Geocoding error:", e);
-      return null;
-    }
+      alert("Message Sent to Merchant!");
+      setMsgInput("");
+    } catch (e) { alert("Send failed: " + e.message); }
   };
 
   const handlePostDrop = async () => {
@@ -207,26 +184,11 @@ const App = () => {
     setIsPosting(true);
     try {
       let lat = 40.7128; let lng = -74.0060; 
-      
-      // 1. Try Geocoding first (Use typed address)
-      const geoCoords = await getCoordinatesFromAddress(newDrop.locationName);
-      
-      if (geoCoords) {
-        lat = geoCoords.lat;
-        lng = geoCoords.lng;
-        console.log("Using Address Coordinates:", lat, lng);
-      } else {
-        // 2. Fallback to GPS if address fails
-        try {
-          const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
-          lat = pos.coords.latitude;
-          lng = pos.coords.longitude;
-          console.log("Using Device GPS:", lat, lng);
-        } catch (e) { 
-          console.log("GPS Defaulting"); 
-          alert("Could not find address or GPS. Using default location.");
-        }
-      }
+      try {
+        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+      } catch (e) { console.log("GPS Defaulting"); }
 
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
         ...newDrop,
@@ -263,7 +225,6 @@ const App = () => {
   };
 
   const openMaps = () => {
-    // Open Google Maps with exact coordinates
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
@@ -283,21 +244,6 @@ const App = () => {
     if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
-  const handleSendMessage = async () => {
-    if (!msgInput.trim()) return;
-    try {
-      await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
-        merchantId: selectedShop.merchantId,
-        dropTitle: selectedShop.title,
-        text: msgInput,
-        senderId: user.uid,
-        createdAt: serverTimestamp()
-      });
-      alert("Message Sent to Merchant!");
-      setMsgInput("");
-    } catch (e) { alert("Send failed: " + e.message); }
-  };
-
   // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
@@ -311,21 +257,20 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
-          const markerArray = [];
-
+          const markers = [];
           filteredShops.forEach(shop => {
              if (shop.lat && shop.lng) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
                  marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
                  marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
-                 markerArray.push([shop.lat, shop.lng]);
+                 markers.push([shop.lat, shop.lng]);
              }
           });
           
-          // Center Map: Prioritize showing all pins. If none, show user location.
-          if (markerArray.length > 0) {
-             const bounds = window.L.latLngBounds(markerArray);
-             map.fitBounds(bounds, { padding: [50, 50] });
+          // Auto-Fit Map
+          if (markers.length > 0) {
+            const bounds = window.L.latLngBounds(markers);
+            map.fitBounds(bounds, { padding: [50, 50] });
           } else {
              navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
           }
@@ -340,7 +285,7 @@ const App = () => {
       } else { loadMap(); }
     }, [filteredShops]);
     
-    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
+    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4 border border-slate-200"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -351,7 +296,7 @@ const App = () => {
       {errorMsg && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8"><div className="bg-white p-6 rounded-2xl text-center"><p className="text-red-600 font-bold mb-4">{errorMsg}</p><button onClick={()=>setErrorMsg(null)} className="bg-black text-white px-6 py-2 rounded-xl">OK</button></div></div>}
 
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
-        <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter">PopPop Go</h1>
+        <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter" onClick={goHome}>PopPop Go</h1>
         <div className="flex gap-2">
           <button 
             onClick={() => {
@@ -363,7 +308,7 @@ const App = () => {
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
-          {orders.filter(o => o.merchantId === user?.uid && o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
+          {memos.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
         </div>
       </header>
@@ -376,7 +321,7 @@ const App = () => {
               <div className="px-4 space-y-4 pb-32">
                 {filteredShops.length === 0 && <div className="py-20 text-center text-slate-300 italic text-sm">No live shops...</div>}
                 {filteredShops.map(shop => (
-                  <div key={shop.id} onClick={() => { setSelectedShop(shop); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
+                  <div key={shop.dropIds[0]} onClick={() => { setSelectedShop(shop); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden shadow-sm border border-slate-100 active:scale-[0.98] transition-transform">
                     <img src={shop.images?.[0] || shop.allImages?.[0]} className="h-64 w-full object-cover" />
                     <div className="p-5">
                       <div className="flex gap-1 mb-1">
@@ -422,14 +367,13 @@ const App = () => {
               )}
 
               <div className="bg-slate-900 p-6 rounded-[32px] flex justify-between items-center text-white active:bg-black shadow-xl" onClick={()=>setShowPayment(true)}>
-                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Zelle Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
+                <div className="text-left"><p className="text-[10px] font-bold opacity-70 uppercase tracking-widest mb-1 italic">Scan to Pay</p><p className="font-bold text-lg underline decoration-indigo-400">{selectedShop.zelleId}</p></div>
                 <div className="bg-white/10 p-3 rounded-2xl"><QrCode /></div>
               </div>
 
               <div className="space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
                  {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
-                 {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
               </div>
               
               <div className="pt-6 border-t border-slate-100 space-y-2">
@@ -526,53 +470,14 @@ const App = () => {
         {view === 'merchant-dash' && (
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2>
-            <div className="space-y-4">
-              <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Customer Payments</h3>
-              {orders.filter(o => o.merchantId === user?.uid).length === 0 ? <div className="text-center text-slate-300 italic text-sm">No new orders</div> : 
-                 orders.filter(o => o.merchantId === user?.uid).map(order => (
-                    <div key={order.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-                       <div className="flex justify-between items-center mb-2">
-                          <span className="font-bold text-sm">Payment Claim</span>
-                          <span className={`text-[10px] px-2 py-1 rounded-full font-black ${order.status === 'verified' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>{order.status.toUpperCase()}</span>
-                       </div>
-                       <p className="text-xs text-slate-500 mb-3">{order.details}</p>
-                       {order.status !== 'verified' && <button className="w-full bg-green-500 text-white py-2 rounded-xl text-xs font-bold" onClick={() => handleVerifyOrder(order.id)}>Confirm Received</button>}
-                    </div>
-                 ))
-              }
-            </div>
-
-            <div className="space-y-4 pt-6 border-t border-slate-100">
-               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Active Items</h3>
-               {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
-                 <div key={myDrop.id} className="bg-white p-5 rounded-[32px] border border-slate-200 shadow-sm">
-                   <div className="flex gap-3 items-center mb-3">
-                     <img src={myDrop.images?.[0]} className="w-12 h-12 rounded-xl object-cover" />
-                     <div className="flex-1">
-                       <span className="font-bold block text-sm">{myDrop.title}</span>
-                       <button className="text-red-400 text-xs font-bold" onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id))}>Delete Spot</button>
-                     </div>
-                   </div>
-                   {/* Item Delete List */}
-                   <div className="space-y-1">
-                     {myDrop.menu?.map((item, idx) => (
-                       <div key={idx} className="flex justify-between items-center text-xs p-2 bg-slate-50 rounded-lg">
-                         <span>{item.name}</span>
-                         <X className="w-4 h-4 text-slate-300 cursor-pointer" onClick={() => deleteItemFromShop(myDrop.id, idx)} />
-                       </div>
-                     ))}
-                   </div>
-                 </div>
-               ))}
-               <button onClick={() => setView('post')} className="w-full bg-slate-900 text-white py-5 rounded-[28px] font-black shadow-xl text-xs uppercase">+ ADD NEW ITEM</button>
-            </div>
-            
             <div className="space-y-4 pt-6 border-t border-slate-100">
               <h3 className="font-black text-[10px] uppercase text-slate-400 tracking-widest">Inbox</h3>
               {memos.length === 0 ? <div className="text-center text-slate-300 italic text-sm">No messages.</div> : memos.map(m => (
-                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
+                <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle || "Customer"}</p><p className="text-sm font-medium">{m.text}</p></div>
               ))}
             </div>
+            
+            <button onClick={() => deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', drops[0]?.id))} className="w-full bg-red-50 text-red-500 py-4 rounded-xl text-xs font-bold mt-10">⚠ DELETE ALL TEST DATA</button>
           </div>
         )}
       </main>
