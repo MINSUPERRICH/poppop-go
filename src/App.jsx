@@ -14,7 +14,7 @@ import {
 import { 
   MapPin, User, ShoppingBag, QrCode, ChevronLeft, 
   Plus, X, Map as MapIcon, Grid, ChevronRight, 
-  Loader2, Trash2, Navigation, Search, Camera, LogIn, Share2, CheckCircle2, Check, HelpCircle, Truck
+  Loader2, Trash2, Navigation, Search, Camera, LogIn, Share2, CheckCircle2, Check, HelpCircle, Truck, Clock
 } from 'lucide-react';
 
 // --- FIREBASE CONFIG ---
@@ -33,10 +33,14 @@ const popDb = getFirestore(popApp);
 const popStorage = getStorage(popApp);
 const APP_PATH = "poppop-go-live";
 
+// CHANGE THIS TO YOUR ACTUAL GMAIL
+const ADMIN_EMAIL = "yooeuchan@gmail.com";
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
+  const [sortBy, setSortBy] = useState('newest'); 
   const [drops, setDrops] = useState([]);
   const [selectedDrop, setSelectedDrop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
@@ -50,7 +54,7 @@ const App = () => {
   const [itemImageLoading, setItemImageLoading] = useState(false);
   const [menuItemInput, setMenuItemInput] = useState({ name: '', price: '', image: '' });
   const [newDrop, setNewDrop] = useState({
-    title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [] 
+    title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [], closesAt: '' 
   });
 
   useEffect(() => {
@@ -86,7 +90,7 @@ const App = () => {
         createdAt: serverTimestamp(),
       });
       setView('explore');
-      setNewDrop({ title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [] });
+      setNewDrop({ title: '', locationName: '', zelleId: '', zelleQR: '', images: [], type: 'static', menu: [], closesAt: '' });
     } catch (e) { alert("Enable GPS and upload a cover photo to go live!"); }
     finally { setIsPosting(false); }
   };
@@ -142,13 +146,30 @@ const App = () => {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"/>
               <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search for food or shops..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-100 rounded-3xl shadow-sm outline-none font-medium"/>
             </div>
+
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              <button onClick={() => setSortBy('newest')} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${sortBy === 'newest' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-100'}`}>🕒 Newest</button>
+              <button onClick={() => setSortBy('city')} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${sortBy === 'city' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-slate-400 border border-slate-100'}`}>🏙️ City/State</button>
+            </div>
+
             {displayMode === 'list' ? (
               <div className="space-y-4">
-                {drops.filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase())).map(d => (
+                {drops
+                  .filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase()) || d.locationName.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .sort((a, b) => {
+                    if (sortBy === 'newest') return b.createdAt?.seconds - a.createdAt?.seconds;
+                    if (sortBy === 'city') return a.locationName.localeCompare(b.locationName);
+                    return 0;
+                  })
+                  .map(d => (
                   <div key={d.id} onClick={() => { setSelectedDrop(d); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden border border-slate-100 shadow-sm active:scale-95 transition-all">
                     <img src={d.images[0]} className="h-52 w-full object-cover" alt={d.title} />
                     <div className="p-5 flex justify-between items-center">
-                      <div><h3 className="font-bold text-lg tracking-tight">{d.title}</h3><p className="text-xs text-slate-400 flex items-center gap-1 mt-1"><MapPin size={12} className="text-red-500"/> {d.locationName}</p></div>
+                      <div>
+                        <h3 className="font-bold text-lg tracking-tight">{d.title}</h3>
+                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-1"><MapPin size={12} className="text-red-500"/> {d.locationName}</p>
+                        {d.closesAt && <p className="text-[10px] font-black text-amber-500 mt-2 flex items-center gap-1 uppercase tracking-widest"><Clock size={10}/> Open until {d.closesAt}</p>}
+                      </div>
                       <div className={`p-3 rounded-2xl ${d.type === 'food-truck' ? 'bg-amber-100 text-amber-600' : 'bg-indigo-100 text-indigo-600'}`}>{d.type === 'food-truck' ? <Truck size={20}/> : <ShoppingBag size={20}/>}</div>
                     </div>
                   </div>
@@ -164,7 +185,7 @@ const App = () => {
             <div className="p-8 -mt-10 bg-white rounded-t-[48px] relative z-10 space-y-6 shadow-2xl">
               <div className="flex justify-between items-start">
                 <div><h2 className="text-3xl font-black tracking-tighter">{selectedDrop.title}</h2><p className="text-slate-400 text-xs font-bold uppercase mt-1 tracking-widest">{selectedDrop.locationName}</p></div>
-                <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black italic">LIVE NOW</div>
+                <div className="bg-green-100 text-green-600 px-3 py-1 rounded-full text-[10px] font-black italic uppercase tracking-widest">Live Now</div>
               </div>
               <div className="flex gap-3">
                 <button onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedDrop.locationName)}`)} className="flex-1 bg-slate-100 py-4 rounded-3xl font-black flex flex-col items-center text-[10px] uppercase tracking-tighter"><Navigation className="mb-1 text-indigo-600" size={20}/> Map</button>
@@ -199,7 +220,8 @@ const App = () => {
               </label>
               <input value={newDrop.title} onChange={e=>setNewDrop({...newDrop, title: e.target.value})} placeholder="Store Name" className="w-full p-5 rounded-3xl border border-slate-100 outline-none font-bold shadow-sm" />
               <input value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName: e.target.value})} placeholder="Full Address (e.g. 123 Main St)" className="w-full p-5 rounded-3xl border border-slate-100 outline-none text-sm shadow-sm" />
-              
+              <input value={newDrop.closesAt} onChange={e=>setNewDrop({...newDrop, closesAt: e.target.value})} placeholder="Closing Time (e.g. 9:00 PM)" className="w-full p-5 rounded-3xl border border-slate-100 outline-none text-sm shadow-sm" />
+
               <div className="bg-indigo-50 p-6 rounded-[32px] space-y-4 border border-indigo-100 shadow-inner">
                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Zelle Payment Info</p>
                  <input value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId: e.target.value})} placeholder="Zelle Email or Phone" className="w-full p-4 rounded-2xl border-none outline-none text-sm font-bold shadow-sm" />
@@ -236,35 +258,35 @@ const App = () => {
           <div className="p-8 space-y-8 pb-32">
             <div className="flex justify-between items-center">
               <h2 className="text-3xl font-black italic tracking-tighter">
-                {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "Admin Panel" : "My Hub"}
+                {user?.email === ADMIN_EMAIL ? "Admin Panel" : "My Hub"}
               </h2>
               <button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button>
             </div>
 
             <div className="space-y-4">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "All Global Active Spots" : "Your Live Spots"}
+                {user?.email === ADMIN_EMAIL ? "All Global Active Spots" : "Your Live Spots"}
               </p>
 
               {drops.filter(d => 
-                user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+                user?.email === ADMIN_EMAIL ? true : d.merchantId === user?.uid
               ).length === 0 && (
                 <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>
               )}
 
               {drops.filter(d => 
-                user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+                user?.email === ADMIN_EMAIL ? true : d.merchantId === user?.uid
               ).map(myDrop => (
                 <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm animate-in">
                   <div className="flex flex-col">
                     <span className="font-bold text-lg leading-none">{myDrop.title}</span>
-                    {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" && (
+                    {user?.email === ADMIN_EMAIL && (
                       <span className="text-[9px] text-indigo-500 font-bold mt-1 uppercase">Owner: {myDrop.merchantId.slice(0,8)}</span>
                     )}
                   </div>
                   <button 
                     onClick={async () => { 
-                      const isAdmin = user?.email === "YOUR_ADMIN_EMAIL@gmail.com";
+                      const isAdmin = user?.email === ADMIN_EMAIL;
                       if(confirm(isAdmin ? "ADMIN: Delete this shop permanently?" : "Delete your spot?")) {
                         await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); 
                       }
