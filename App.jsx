@@ -90,12 +90,14 @@ const App = () => {
   useEffect(() => {
     if (!user || !popDb) return;
     
-    const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-    const uDrops = onSnapshot(dropsQ, 
+    // Drops
+    const qDrops = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
+    const uDrops = onSnapshot(qDrops, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
       (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
+    // Orders
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
@@ -107,12 +109,13 @@ const App = () => {
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
+      // Safety check
       if (!drop.merchantId) return;
 
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          // Use the lat/lng from this drop as the "Merchant Location"
+          // Prioritize drop location
           lat: drop.lat, 
           lng: drop.lng,
           allImages: drop.images ? [...drop.images] : [],
@@ -121,7 +124,7 @@ const App = () => {
         };
       } else {
         const group = groups[drop.merchantId];
-        // If this drop is newer, update the location
+        // Update location if this drop is newer
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
            group.lat = drop.lat;
            group.lng = drop.lng;
@@ -135,8 +138,6 @@ const App = () => {
     return Object.values(groups);
   };
   const uniqueShops = getUniqueShops();
-  
-  // Safe Filtering
   const filteredShops = uniqueShops.filter(shop => {
     const term = searchTerm.toLowerCase();
     const t = (shop.title || "").toLowerCase();
@@ -181,6 +182,24 @@ const App = () => {
     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
+  // --- NEW: GEOCODING LOGIC ---
+  const getCoordinatesFromAddress = async (address) => {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+      const data = await response.json();
+      if (data && data.length > 0) {
+        return {
+          lat: parseFloat(data[0].lat),
+          lng: parseFloat(data[0].lon)
+        };
+      }
+      return null;
+    } catch (e) {
+      console.error("Geocoding error:", e);
+      return null;
+    }
+  };
+
   const handlePostDrop = async () => {
     if (!popDb || !user) { alert("System Offline. Refresh."); return; }
     if (newDrop.images.length === 0) { alert("Please add at least 1 item photo."); return; }
@@ -188,11 +207,26 @@ const App = () => {
     setIsPosting(true);
     try {
       let lat = 40.7128; let lng = -74.0060; 
-      try {
-        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
-        lat = pos.coords.latitude;
-        lng = pos.coords.longitude;
-      } catch (e) { console.log("GPS Defaulting"); }
+      
+      // 1. Try Geocoding first (Use typed address)
+      const geoCoords = await getCoordinatesFromAddress(newDrop.locationName);
+      
+      if (geoCoords) {
+        lat = geoCoords.lat;
+        lng = geoCoords.lng;
+        console.log("Using Address Coordinates:", lat, lng);
+      } else {
+        // 2. Fallback to GPS if address fails
+        try {
+          const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+          console.log("Using Device GPS:", lat, lng);
+        } catch (e) { 
+          console.log("GPS Defaulting"); 
+          alert("Could not find address or GPS. Using default location.");
+        }
+      }
 
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
         ...newDrop,
@@ -229,6 +263,7 @@ const App = () => {
   };
 
   const openMaps = () => {
+    // Open Google Maps with exact coordinates
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
@@ -276,20 +311,24 @@ const App = () => {
           
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
-          // Use filteredShops (All Merchants)
+          const markerArray = [];
+
           filteredShops.forEach(shop => {
-             // Only add pin if coordinates exist
              if (shop.lat && shop.lng) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
-                 // Bind Click event to open shop detail
-                 marker.on('click', () => { 
-                    setSelectedShop(shop); 
-                    setView('shop-detail'); 
-                 });
+                 marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
+                 marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
+                 markerArray.push([shop.lat, shop.lng]);
              }
           });
           
-          navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
+          // Center Map: Prioritize showing all pins. If none, show user location.
+          if (markerArray.length > 0) {
+             const bounds = window.L.latLngBounds(markerArray);
+             map.fitBounds(bounds, { padding: [50, 50] });
+          } else {
+             navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
+          }
       };
       
       if (!window.L) {
@@ -299,7 +338,7 @@ const App = () => {
          script.onload = loadMap;
          document.head.appendChild(script);
       } else { loadMap(); }
-    }, [filteredShops]); // Re-render when shops change
+    }, [filteredShops]);
     
     return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
