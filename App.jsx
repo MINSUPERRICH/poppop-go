@@ -21,9 +21,6 @@ import {
 
 // --- CONFIGURATION ---
 const getFirebaseConfig = () => {
-  if (typeof __firebase_config !== 'undefined') {
-    try { return JSON.parse(__firebase_config); } catch (e) { }
-  }
   try {
     const env = import.meta.env || {};
     return {
@@ -57,6 +54,7 @@ const App = () => {
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
   const [orders, setOrders] = useState([]); 
+  const [memos, setMemos] = useState([]); // Added specific state for memos
   const [selectedShop, setSelectedShop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
   
@@ -72,7 +70,6 @@ const App = () => {
   const [errorMsg, setErrorMsg] = useState(null);
   const [loyaltyUnlocked, setLoyaltyUnlocked] = useState(false);
 
-  // Form State
   const [newDrop, setNewDrop] = useState({
     title: '', locationName: '', zelleId: '', zelleQrUrl: '', zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] 
   });
@@ -96,20 +93,28 @@ const App = () => {
     const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(dropsQ, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { 
-        console.error("DB Error", e);
-        if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); 
-      }
+      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
     );
     
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
     const uOrders = onSnapshot(qOrders, 
       (s) => setOrders(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.timestamp?.seconds||0)-(a.timestamp?.seconds||0)))
     );
-    return () => { uDrops(); uOrders(); };
+
+    // FIXED: Correct Memo Query
+    const qMemos = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'));
+    const uMemos = onSnapshot(qMemos, 
+      (s) => {
+        const allMemos = s.docs.map(d => ({id: d.id, ...d.data()}));
+        // Filter: Show only memos sent TO me (as merchant)
+        setMemos(allMemos.filter(m => m.merchantId === user.uid)); 
+      }
+    );
+
+    return () => { uDrops(); uOrders(); uMemos(); };
   }, [user]);
 
-  // --- LOGIC: Group Drops (Safe) ---
+  // --- LOGIC: Group Drops ---
   const getUniqueShops = () => {
     const groups = {};
     drops.forEach(drop => {
@@ -118,9 +123,10 @@ const App = () => {
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
-          // Fallbacks to prevent crash
           title: drop.title || "Unknown Shop",
           locationName: drop.locationName || "No Location",
+          lat: drop.lat || 0,
+          lng: drop.lng || 0,
           allImages: Array.isArray(drop.images) ? [...drop.images] : [],
           allMenu: Array.isArray(drop.menu) ? [...drop.menu] : [],
           dropIds: [drop.id]
@@ -131,7 +137,7 @@ const App = () => {
         if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
         
-        // Use newest location info
+        // Update to latest location
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
             group.title = drop.title;
             group.locationName = drop.locationName;
@@ -145,9 +151,8 @@ const App = () => {
     return Object.values(groups);
   };
   const uniqueShops = getUniqueShops();
-  
   const filteredShops = uniqueShops.filter(shop => {
-    const term = (searchTerm || "").toLowerCase();
+    const term = searchTerm.toLowerCase();
     const t = (shop.title || "").toLowerCase();
     const l = (shop.locationName || "").toLowerCase();
     return t.includes(term) || l.includes(term);
@@ -190,9 +195,10 @@ const App = () => {
     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
-  // --- ADDRESS GEOCODING (Fixes Map Location) ---
+  // --- FIXED: GEOCODING ---
   const getCoordinatesFromAddress = async (address) => {
     try {
+      // Use Nominatim OpenStreetMap API
       const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
       const data = await response.json();
       if (data && data.length > 0) {
@@ -208,9 +214,9 @@ const App = () => {
 
     setIsPosting(true);
     try {
-      let lat = 40.7128; let lng = -74.0060; 
+      let lat = 0; let lng = 0; 
 
-      // 1. Try Address Conversion First
+      // 1. Try Address First (Higher Priority)
       const addressCoords = await getCoordinatesFromAddress(newDrop.locationName);
       
       if (addressCoords) {
@@ -223,6 +229,11 @@ const App = () => {
            lat = pos.coords.latitude;
            lng = pos.coords.longitude;
          } catch (e) { console.log("GPS Defaulting"); }
+      }
+
+      // If still 0, warn user but allow post (Map pin will be at 0,0)
+      if (lat === 0 && lng === 0) {
+         alert("Warning: Could not find location. Map pin may be inaccurate.");
       }
 
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'), {
@@ -260,14 +271,23 @@ const App = () => {
   };
 
   const openMaps = () => {
-    if (!selectedShop) return;
-    window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
+    // Uses Exact Coordinates saved from Geocoding
+    if (selectedShop.lat && selectedShop.lng) {
+       window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
+    } else {
+       // Fallback to text search
+       window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedShop.locationName)}`, '_blank');
+    }
   };
 
   const openUber = () => {
-    if (!selectedShop) return;
     const nick = encodeURIComponent(selectedShop.title);
-    window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
+    if (selectedShop.lat && selectedShop.lng) {
+       window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
+    } else {
+       // Fallback
+       window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]=${encodeURIComponent(selectedShop.locationName)}&dropoff[nickname]=${nick}`, '_blank');
+    }
   };
 
   const shareToSocial = async () => {
@@ -281,21 +301,27 @@ const App = () => {
     if (selectedShop.hasCoupon) setLoyaltyUnlocked(true);
   };
 
+  // FIXED: Messenger Function
   const handleSendMessage = async () => {
     if (!msgInput.trim()) return;
+    if (!selectedShop || !selectedShop.merchantId) {
+        alert("Error: Cannot find merchant ID.");
+        return;
+    }
     try {
       await addDoc(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'memos'), {
         merchantId: selectedShop.merchantId,
-        dropTitle: selectedShop.title,
+        dropTitle: selectedShop.title || "Inquiry",
         text: msgInput,
         senderId: user.uid,
         createdAt: serverTimestamp()
       });
-      alert("Message Sent to Merchant!");
+      alert("Message Sent!");
       setMsgInput("");
     } catch (e) { alert("Send failed: " + e.message); }
   };
 
+  // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
     useEffect(() => {
@@ -305,11 +331,13 @@ const App = () => {
           
           const map = window.L.map('map-el', {zoomControl: false}).setView([40.7128, -74.0060], 13);
           mapRef.current = map;
+          
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
           const markers = [];
           filteredShops.forEach(shop => {
-             if (shop.lat && shop.lng) {
+             // Only map shops with valid coordinates
+             if (shop.lat && shop.lng && shop.lat !== 0) {
                  const marker = window.L.marker([shop.lat, shop.lng]).addTo(map);
                  marker.bindPopup(`<b>${shop.title}</b><br>${shop.locationName}`);
                  marker.on('click', () => { setSelectedShop(shop); setView('shop-detail'); });
@@ -317,6 +345,7 @@ const App = () => {
              }
           });
           
+          // Fit bounds to show ALL markers
           if (markers.length > 0) {
              const bounds = window.L.latLngBounds(markers);
              map.fitBounds(bounds, { padding: [50, 50] });
@@ -324,6 +353,7 @@ const App = () => {
              navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
           }
       };
+      
       if (!window.L) {
          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
          document.head.appendChild(link);
@@ -332,7 +362,8 @@ const App = () => {
          document.head.appendChild(script);
       } else { loadMap(); }
     }, [filteredShops]);
-    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4 border border-slate-200"></div>;
+    
+    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -345,11 +376,18 @@ const App = () => {
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter" onClick={goHome}>PopPop Go</h1>
         <div className="flex gap-2">
-          <button onClick={() => { if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } else { goHome(); }}} className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}>
+          <button 
+            onClick={() => {
+               if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } 
+               else { goHome(); }
+            }} 
+            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
+          >
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
           {orders.filter(o => o.merchantId === user?.uid && o.status === 'pending').length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>}
+          {memos.length > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white animate-pulse"></span>}
           </button>
         </div>
       </header>
@@ -414,9 +452,8 @@ const App = () => {
 
               <div className="space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
-                 {/* Safe rendering for menu */}
-                 {(selectedShop.allMenu || []).map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
-                 {(selectedShop.allMenu || []).length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
+                 {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
+                 {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
               </div>
               
               <div className="pt-6 border-t border-slate-100 space-y-2">
