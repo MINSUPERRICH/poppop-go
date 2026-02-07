@@ -233,18 +233,50 @@ const App = () => {
         )}
 
         {view === 'merchant-dash' && (
-          <div className="p-8 space-y-8">
-            <div className="flex justify-between items-center"><h2 className="text-3xl font-black italic tracking-tighter">My Hub</h2><button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button></div>
-            <div className="space-y-4">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Live Spots</p>
-              {drops.filter(d => d.merchantId === user?.uid).length === 0 && <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>}
-              {drops.filter(d => d.merchantId === user?.uid).map(myDrop => (
-                <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm"><span className="font-bold text-lg">{myDrop.title}</span><button onClick={() => { if(confirm("Delete spot?")) deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); }} className="p-3 bg-red-50 text-red-500 rounded-2xl"><Trash2 size={20}/></button></div>
-              ))}
-              <button onClick={() => setView('post')} className="w-full py-6 border-2 border-dashed border-indigo-100 bg-indigo-50/30 rounded-[32px] text-indigo-600 font-black text-xs uppercase tracking-widest">+ NEW LOCATION</button>
-            </div>
+         <div className="p-8 space-y-8 pb-32">
+         <div className="flex justify-between items-center">
+         <h2 className="text-3xl font-black italic tracking-tighter">
+          {/* Replace with your real Gmail address */}
+         {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "Admin Panel" : "My Hub"}
+        </h2>
+        <button onClick={() => signOut(popAuth)} className="text-red-500 font-black text-[10px] tracking-widest bg-red-50 px-3 py-2 rounded-xl">LOGOUT</button>
+       </div>
+
+       <div className="space-y-4">
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+        {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? "All Global Active Spots" : "Your Live Spots"}
+      </p>
+
+      {/* ADMIN LOGIC: If admin, show everything. If merchant, show only their own pins. */}
+      {drops.filter(d => 
+        user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+      ).length === 0 && (
+        <div className="text-center py-10 bg-slate-50 rounded-3xl border border-dashed text-slate-400 font-bold text-xs uppercase">No active spots</div>
+      )}
+
+      {drops.filter(d => 
+        user?.email === "YOUR_ADMIN_EMAIL@gmail.com" ? true : d.merchantId === user?.uid
+      ).map(myDrop => (
+        <div key={myDrop.id} className="bg-white p-6 rounded-[32px] border border-slate-100 flex items-center justify-between shadow-sm animate-in">
+          <div className="flex flex-col">
+            <span className="font-bold text-lg leading-none">{myDrop.title}</span>
+            {user?.email === "YOUR_ADMIN_EMAIL@gmail.com" && (
+              <span className="text-[9px] text-indigo-500 font-bold mt-1 uppercase">Owner: {myDrop.merchantId.slice(0,8)}</span>
+            )}
           </div>
-        )}
+          <button 
+            onClick={async () => { 
+              const isAdmin = user?.email === "YOUR_ADMIN_EMAIL@gmail.com";
+              if(confirm(isAdmin ? "ADMIN: Delete this shop permanently?" : "Delete your spot?")) {
+                await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); 
+              }
+            }} 
+            className="p-3 bg-red-50 text-red-500 rounded-2xl active:scale-90 transition-transform"
+          >
+            <Trash2 size={20}/>
+          </button>
+        </div>
+      ))}
       </main>
 
       {/* NAVIGATION */}
@@ -335,6 +367,7 @@ const App = () => {
     </div>
   );
 };
+
 
 
 export default App;
