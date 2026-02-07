@@ -21,6 +21,9 @@ import {
 
 // --- CONFIGURATION ---
 const getFirebaseConfig = () => {
+  if (typeof __firebase_config !== 'undefined') {
+    try { return JSON.parse(__firebase_config); } catch (e) { }
+  }
   try {
     const env = import.meta.env || {};
     return {
@@ -36,7 +39,6 @@ const getFirebaseConfig = () => {
 
 const firebaseConfig = getFirebaseConfig();
 
-// Initialize
 let popApp, popAuth, popDb, popStorage;
 if (firebaseConfig.apiKey) {
   try {
@@ -87,14 +89,17 @@ const App = () => {
     return onAuthStateChanged(popAuth, setUser);
   }, []);
 
-  // 2. Data Listeners
+  // 2. Data
   useEffect(() => {
     if (!user || !popDb) return;
     
     const dropsQ = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     const uDrops = onSnapshot(dropsQ, 
       (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),
-      (e) => { if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); }
+      (e) => { 
+        console.error("DB Error", e);
+        if(e.code === 'permission-denied') setErrorMsg("DATABASE LOCKED: Check Rules"); 
+      }
     );
     
     const qOrders = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'orders'));
@@ -113,6 +118,7 @@ const App = () => {
       if (!groups[drop.merchantId]) {
         groups[drop.merchantId] = {
           ...drop,
+          // Fallbacks to prevent crash
           title: drop.title || "Unknown Shop",
           locationName: drop.locationName || "No Location",
           allImages: Array.isArray(drop.images) ? [...drop.images] : [],
@@ -121,12 +127,11 @@ const App = () => {
         };
       } else {
         const group = groups[drop.merchantId];
-        // Safely merge
         if (Array.isArray(drop.images)) group.allImages = [...group.allImages, ...drop.images];
         if (Array.isArray(drop.menu)) group.allMenu = [...group.allMenu, ...drop.menu];
         group.dropIds.push(drop.id);
         
-        // Update to latest location/title/zelle info if newer
+        // Use newest location info
         if (drop.createdAt?.seconds > group.createdAt?.seconds) {
             group.title = drop.title;
             group.locationName = drop.locationName;
@@ -140,8 +145,9 @@ const App = () => {
     return Object.values(groups);
   };
   const uniqueShops = getUniqueShops();
+  
   const filteredShops = uniqueShops.filter(shop => {
-    const term = searchTerm.toLowerCase();
+    const term = (searchTerm || "").toLowerCase();
     const t = (shop.title || "").toLowerCase();
     const l = (shop.locationName || "").toLowerCase();
     return t.includes(term) || l.includes(term);
@@ -150,10 +156,10 @@ const App = () => {
   // --- ACTIONS ---
 
   const goHome = () => {
-    setView('explore');
-    setDisplayMode('list');
     setSearchTerm("");
+    setDisplayMode('list');
     setSelectedShop(null);
+    setView('explore');
   };
 
   const handlePaymentNotify = async () => {
@@ -184,10 +190,9 @@ const App = () => {
     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
   };
 
-  // --- ADDRESS CONVERTER ---
+  // --- ADDRESS GEOCODING (Fixes Map Location) ---
   const getCoordinatesFromAddress = async (address) => {
     try {
-      // Free OpenStreetMap Geocoding
       const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
       const data = await response.json();
       if (data && data.length > 0) {
@@ -205,14 +210,14 @@ const App = () => {
     try {
       let lat = 40.7128; let lng = -74.0060; 
 
-      // 1. Try Address First
+      // 1. Try Address Conversion First
       const addressCoords = await getCoordinatesFromAddress(newDrop.locationName);
       
       if (addressCoords) {
          lat = addressCoords.lat;
          lng = addressCoords.lng;
       } else {
-         // 2. Fallback to GPS if address fails
+         // 2. Fallback to GPS
          try {
            const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, {timeout: 5000}));
            lat = pos.coords.latitude;
@@ -229,7 +234,6 @@ const App = () => {
 
       alert("Spot Published!");
       setView('explore');
-      // Reset
       setNewDrop({ title: newDrop.title, locationName: newDrop.locationName, zelleId: newDrop.zelleId, zelleQrUrl: newDrop.zelleQrUrl, zelleLink: '', images: [], status: 'live', type: 'static', hasCoupon: false, menu: [] });
     } catch (err) { alert("Error: " + err.message); } 
     finally { setIsPosting(false); }
@@ -256,11 +260,12 @@ const App = () => {
   };
 
   const openMaps = () => {
-    // Maps query uses EXACT lat/lng saved
+    if (!selectedShop) return;
     window.open(`https://www.google.com/maps/search/?api=1&query=${selectedShop.lat},${selectedShop.lng}`, '_blank');
   };
 
   const openUber = () => {
+    if (!selectedShop) return;
     const nick = encodeURIComponent(selectedShop.title);
     window.open(`https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=${selectedShop.lat}&dropoff[longitude]=${selectedShop.lng}&dropoff[nickname]=${nick}`, '_blank');
   };
@@ -291,7 +296,6 @@ const App = () => {
     } catch (e) { alert("Send failed: " + e.message); }
   };
 
-  // Map Component
   const MapView = () => {
     const mapRef = useRef(null);
     useEffect(() => {
@@ -301,7 +305,6 @@ const App = () => {
           
           const map = window.L.map('map-el', {zoomControl: false}).setView([40.7128, -74.0060], 13);
           mapRef.current = map;
-          
           window.L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png').addTo(map);
           
           const markers = [];
@@ -314,16 +317,13 @@ const App = () => {
              }
           });
           
-          // MAP FIX: Prioritize Showing PINS, not User
           if (markers.length > 0) {
              const bounds = window.L.latLngBounds(markers);
              map.fitBounds(bounds, { padding: [50, 50] });
           } else {
-             // Only center on user if NO shops exist
              navigator.geolocation.getCurrentPosition(p => map.setView([p.coords.latitude, p.coords.longitude], 14));
           }
       };
-      
       if (!window.L) {
          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
          document.head.appendChild(link);
@@ -332,8 +332,7 @@ const App = () => {
          document.head.appendChild(script);
       } else { loadMap(); }
     }, [filteredShops]);
-    
-    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4"></div>;
+    return <div id="map-el" className="h-[75vh] w-full rounded-2xl z-0 bg-slate-100 mt-4 border border-slate-200"></div>;
   };
 
   if (!firebaseConfig.apiKey) return <div className="p-10 text-center text-white bg-slate-900">Config Error</div>;
@@ -346,13 +345,7 @@ const App = () => {
       <header className="bg-white/95 backdrop-blur-md px-6 pt-12 pb-4 sticky top-0 z-30 border-b border-slate-100 flex justify-between items-center">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter" onClick={goHome}>PopPop Go</h1>
         <div className="flex gap-2">
-          <button 
-            onClick={() => {
-               if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } 
-               else { goHome(); }
-            }} 
-            className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}
-          >
+          <button onClick={() => { if (view === 'explore' && displayMode === 'list') { setDisplayMode('map'); } else { goHome(); }}} className={`w-10 h-10 rounded-2xl border flex items-center justify-center active:scale-90 transition-all ${displayMode==='map' && view==='explore' ? 'bg-indigo-600 text-white shadow-lg':'bg-white text-slate-600'}`}>
              {displayMode==='list' && view==='explore' ? <MapIcon className="w-5 h-5"/> : <Grid className="w-5 h-5"/>}
           </button>
           <button onClick={() => setView('merchant-dash')} className="w-10 h-10 rounded-2xl border bg-slate-50 flex items-center justify-center active:scale-90 transition-all relative"><User className="w-5 h-5 text-slate-400"/>
@@ -421,8 +414,9 @@ const App = () => {
 
               <div className="space-y-2">
                  <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">All Items</h3>
-                 {selectedShop.allMenu?.map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
-                 {selectedShop.allMenu?.length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
+                 {/* Safe rendering for menu */}
+                 {(selectedShop.allMenu || []).map((m,i)=>(<div key={i} className="flex justify-between p-4 border rounded-2xl"><span className="font-bold">{m.name}</span><span className="text-indigo-600 font-black">${m.price}</span></div>))}
+                 {(selectedShop.allMenu || []).length === 0 && <div className="p-4 text-center text-slate-300 text-xs italic">See photos above for inventory</div>}
               </div>
               
               <div className="pt-6 border-t border-slate-100 space-y-2">
@@ -566,14 +560,6 @@ const App = () => {
                 <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 relative"><p className="text-xs font-bold text-indigo-500 mb-1">{m.dropTitle}</p><p className="text-sm font-medium">{m.text}</p></div>
               ))}
             </div>
-            
-            {/* DEBUG DELETE BUTTON (Remove after testing) */}
-            <button onClick={async () => {
-                const q = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
-                const snap = await import('firebase/firestore').then(mod => mod.getDocs(q));
-                snap.forEach(d => deleteDoc(d.ref));
-                alert("All Test Data Deleted! Refresh app.");
-            }} className="w-full bg-red-100 text-red-600 py-3 rounded-xl text-xs font-bold mt-10">⚠ DELETE ALL TEST DATA</button>
           </div>
         )}
       </main>
