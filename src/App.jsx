@@ -22,10 +22,11 @@ const popStorage = getStorage(popApp);
 const APP_PATH = "poppop-go-live";
 
 const App = () => {
-  const MY_ADMIN_EMAIL = "yooeuchan@gmail.com"; 
+  const MY_ADMIN_EMAIL = "YOUR_ADMIN_EMAIL@gmail.com"; 
 
   const [user, setUser] = useState(null);
   const [view, setView] = useState('explore'); 
+  const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
   const [selectedDrop, setSelectedDrop] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
@@ -72,23 +73,8 @@ const App = () => {
     finally { setIsPosting(false); }
   };
 
-  const updateLocation = async (dropId) => {
-    try {
-      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej));
-      await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), {
-        lat: pos.coords.latitude, lng: pos.coords.longitude, updatedAt: serverTimestamp()
-      });
-      alert("Verified!");
-    } catch (e) { alert("GPS Error."); }
-  };
-
-  const toggleStock = async (dropId, menuIndex, currentStock) => {
-    const drop = drops.find(d => d.id === dropId);
-    const newMenu = [...drop.menu];
-    const statuses = ['in-stock', 'low-stock', 'sold-out'];
-    const nextStatus = statuses[(statuses.indexOf(currentStock) + 1) % 3];
-    newMenu[menuIndex].stock = nextStatus;
-    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { menu: newMenu });
+  const addHype = async (dropId) => {
+    await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), { hypes: increment(1) });
   };
 
   const DetailMap = ({ drop }) => {
@@ -101,16 +87,15 @@ const App = () => {
         mapRef.current = map;
       }
     }, [drop]);
-    return <div id="detail-map" className="h-44 w-full rounded-2xl border border-slate-100 shadow-inner my-4 z-0"></div>;
+    return <div id="detail-map" className="h-48 w-full rounded-2xl border border-slate-100 shadow-inner my-4 z-0"></div>;
   };
 
   return (
     <div className="flex flex-col h-screen bg-white font-sans max-w-md mx-auto relative overflow-hidden border-x border-slate-100 shadow-2xl">
-      
       <header className="px-6 pt-12 pb-4 flex justify-between items-center bg-white/95 backdrop-blur-md z-50 border-b sticky top-0">
         <h1 className="text-2xl font-black text-indigo-600 italic tracking-tighter cursor-pointer" onClick={() => setView('explore')}>PopPop Go</h1>
         <div className="flex gap-2">
-          {!user ? <button onClick={handleLogin} className="p-2.5 rounded-xl bg-indigo-600 text-white"><LogIn size={20}/></button> : <button onClick={() => setView('merchant-dash')} className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600"><User size={20}/></button>}
+          {!user ? <button onClick={handleLogin} className="p-2.5 rounded-xl bg-indigo-600 text-white shadow-lg"><LogIn size={20}/></button> : <button onClick={() => setView('merchant-dash')} className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100"><User size={20}/></button>}
         </div>
       </header>
 
@@ -119,17 +104,17 @@ const App = () => {
           <div className="p-5 space-y-6 pb-40">
             <div className="relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"/>
-                <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Find what's popping..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-3xl shadow-sm outline-none font-bold text-sm"/>
+                <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Search neighborhood gems..." className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-3xl shadow-sm outline-none font-bold text-sm"/>
             </div>
 
             <div className="grid gap-6">
-                {drops.filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase())).map(d => (
+                {drops.filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase())).sort((a,b) => b.createdAt?.seconds - a.createdAt?.seconds).map(d => (
                   <div key={d.id} onClick={() => { setSelectedDrop(d); setView('shop-detail'); }} className="bg-white rounded-[32px] overflow-hidden border border-slate-100 shadow-sm active:scale-[0.98] transition-all">
                     <img src={d.images?.[0]} className="w-full h-64 object-cover" />
                     <div className="p-6 flex justify-between items-center">
                         <div className="space-y-1">
-                          <h3 className="font-black text-2xl tracking-tight">{d.title}</h3>
-                          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest leading-none">{d.locationName.split(',')[0]}</p>
+                          <h3 className="font-black text-2xl tracking-tight leading-none mb-1">{d.title}</h3>
+                          <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">{d.locationName.split(',')[0]}</p>
                         </div>
                         <div className="flex items-center gap-1 text-orange-500 font-black text-[10px] uppercase bg-orange-50 px-3 py-1.5 rounded-full">
                             <Flame size={12}/> {d.hypes || 0} Hot
@@ -149,37 +134,36 @@ const App = () => {
                 </div>
 
                 <div className="p-8 -mt-10 bg-white rounded-t-[40px] relative space-y-8">
-                    {/* SECTION 1: IDENTITY */}
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
                             <h2 className="text-4xl font-black tracking-tighter leading-none">{selectedDrop.title}</h2>
-                            <span className="bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase">Active Now</span>
+                            <span className="bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Active</span>
                         </div>
-                        <p className="text-slate-400 text-sm font-bold leading-tight">{selectedDrop.locationName}</p>
+                        <p className="text-slate-400 text-sm font-bold">{selectedDrop.locationName}</p>
                     </div>
 
-                    {/* SECTION 2: STORY */}
+                    <DetailMap drop={selectedDrop} />
+
                     {selectedDrop.description && (
                       <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2"><Info size={14}/> About this spot</p>
-                        <p className="text-sm font-medium text-slate-600 leading-relaxed italic">"{selectedDrop.description}"</p>
+                        <p className="text-sm font-medium text-slate-600 italic leading-relaxed">"{selectedDrop.description}"</p>
                       </div>
                     )}
 
-                    {/* SECTION 3: MAP */}
-                    <DetailMap drop={selectedDrop} />
-
-                    {/* SECTION 4: ACTIONS */}
                     <div className="flex flex-col gap-3">
                         <button onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedDrop.locationName)}`)} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all"><Navigation size={18}/> Navigation</button>
+                        <div className="flex gap-2">
+                            <button onClick={(e) => { e.stopPropagation(); addHype(selectedDrop.id); }} className="flex-1 bg-orange-50 text-orange-600 py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 border border-orange-100 active:scale-95 transition-transform"><Flame size={20}/> {selectedDrop.hypes || 0} Hype</button>
+                            <button onClick={() => { const msg = `Check out ${selectedDrop.title}! poppopnow.com`; if(navigator.share) navigator.share({title: selectedDrop.title, text: msg, url: 'https://poppopnow.com'}); else {navigator.clipboard.writeText(msg); alert("Copied!");} }} className="flex-1 bg-slate-100 text-slate-600 py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 active:scale-95 transition-transform"><Share2 size={18}/> Share</button>
+                        </div>
                         {selectedDrop.zelleId ? (
-                            <button onClick={()=>setShowPayment(true)} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-xl"><QrCode size={18}/> Pay via Zelle</button>
+                            <button onClick={()=>setShowPayment(true)} className="w-full bg-indigo-600 text-white py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-xl shadow-indigo-100"><QrCode size={18}/> Pay via Zelle</button>
                         ) : (
                             <div className="w-full bg-emerald-50 text-emerald-600 py-5 rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 border border-emerald-100"><Banknote size={18}/> Cash Only</div>
                         )}
                     </div>
 
-                    {/* SECTION 5: THE MENU */}
                     <div className="space-y-6 pt-8 border-t border-slate-100">
                         <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Available Today</p>
                         <div className="grid grid-cols-1 gap-4">
@@ -200,6 +184,7 @@ const App = () => {
             </div>
         )}
 
+        {/* MERCHANT HUB VIEW */}
         {view === 'merchant-dash' && (
           <div className="p-8 space-y-8 pb-32">
             <h2 className="text-4xl font-black italic tracking-tighter">My Hub</h2>
@@ -209,24 +194,19 @@ const App = () => {
                   <h3 className="font-black text-2xl">{myDrop.title}</h3>
                   <button onClick={async () => { if(confirm("Delete Listing?")) await deleteDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id)); }} className="p-3 bg-red-50 text-red-500 rounded-2xl"><Trash2 size={20}/></button>
                 </div>
-                <button onClick={() => updateLocation(myDrop.id)} className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-lg"><RefreshCw size={16}/> Refresh GPS Now</button>
-                <div className="space-y-3 pt-4 border-t">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Update Stock</p>
-                    {myDrop.menu?.map((item, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
-                            <span className="text-xs font-bold text-slate-700">{item.name}</span>
-                            <button onClick={() => toggleStock(myDrop.id, idx, item.stock)} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${item.stock === 'in-stock' ? 'bg-indigo-600 text-white' : item.stock === 'low-stock' ? 'bg-amber-500 text-white' : 'bg-slate-300 text-slate-600'}`}>
-                                {item.stock}
-                            </button>
-                        </div>
-                    ))}
-                </div>
+                <button onClick={() => {
+                   navigator.geolocation.getCurrentPosition(async (pos) => {
+                     await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', myDrop.id), { lat: pos.coords.latitude, lng: pos.coords.longitude, updatedAt: serverTimestamp() });
+                     alert("GPS Updated!");
+                   });
+                }} className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 active:scale-95 transition-all"><RefreshCw size={16}/> Refresh GPS Now</button>
               </div>
             ))}
-            <button onClick={() => setView('post')} className="w-full py-6 border-2 border-dashed border-indigo-200 bg-indigo-50/50 rounded-[32px] text-indigo-600 font-black text-xs uppercase">+ NEW SPOT</button>
+            <button onClick={() => setView('post')} className="w-full py-6 border-2 border-dashed border-indigo-200 bg-indigo-50/50 rounded-[32px] text-indigo-600 font-black text-xs uppercase">+ NEW LISTING</button>
           </div>
         )}
 
+        {/* POSTING VIEW */}
         {view === 'post' && (
           <div className="p-8 space-y-8 pb-40">
             <h2 className="text-4xl font-black italic tracking-tighter">Go Live</h2>
@@ -235,16 +215,17 @@ const App = () => {
               <textarea value={newDrop.description} onChange={e=>setNewDrop({...newDrop, description: e.target.value})} placeholder="Tell your story... (Optional)" className="w-full p-5 rounded-2xl border border-slate-200 outline-none font-bold text-sm h-32" />
               <input value={newDrop.locationName} onChange={e=>setNewDrop({...newDrop, locationName: e.target.value})} placeholder="Street Corner/Address" className="w-full p-5 rounded-2xl border border-slate-200 outline-none font-bold" />
               <div className="flex gap-2">
-                  <input value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId: e.target.value})} placeholder="Zelle (Optional)" className="flex-1 p-5 rounded-2xl border border-slate-200 font-bold" />
-                  <input value={newDrop.phone} onChange={e=>setNewDrop({...newDrop, phone: e.target.value})} placeholder="Phone (Optional)" className="flex-1 p-5 rounded-2xl border border-slate-200 font-bold" />
+                  <input value={newDrop.zelleId} onChange={e=>setNewDrop({...newDrop, zelleId: e.target.value})} placeholder="Zelle (Opt)" className="flex-1 p-5 rounded-2xl border border-slate-200 font-bold" />
+                  <input value={newDrop.phone} onChange={e=>setNewDrop({...newDrop, phone: e.target.value})} placeholder="Phone (Opt)" className="flex-1 p-5 rounded-2xl border border-slate-200 font-bold" />
               </div>
+              
               <label className="block w-full h-64 border-2 border-dashed rounded-[32px] flex flex-col items-center justify-center text-slate-400 border-slate-200 bg-white overflow-hidden cursor-pointer shadow-inner">
-                {newDrop.images.length > 0 ? <img src={newDrop.images[0]} className="w-full h-full object-cover" /> : <><Camera size={40} className="text-slate-300" /><span className="text-[10px] font-black mt-4 uppercase">Capture Storefront</span></>}
+                {newDrop.images.length > 0 ? <img src={newDrop.images[0]} className="w-full h-full object-cover" /> : <><Camera size={40} className="text-slate-300" /><span className="text-[10px] font-black mt-4 uppercase">Capture storefront</span></>}
                 <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => { const url = await uploadToFirebase(e.target.files[0], 'drops'); setNewDrop({...newDrop, images: [url]}); }} />
               </label>
-              
+
               <div className="p-6 bg-slate-900 rounded-[32px] space-y-4 shadow-2xl">
-                <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Live Inventory</p>
+                <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">Live Menu</p>
                 <div className="flex gap-3">
                   <label className="w-16 h-16 bg-white/10 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden">
                     {itemImageLoading ? <Loader2 className="animate-spin text-white"/> : menuItemInput.image ? <img src={menuItemInput.image} className="w-full h-full object-cover" /> : <Camera size={20} className="text-white/20"/>}
@@ -264,23 +245,37 @@ const App = () => {
         )}
       </main>
 
-      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-slate-900/95 backdrop-blur-2xl rounded-[35px] py-4 px-10 flex justify-between items-center z-[100] shadow-2xl">
+      {/* FIXED NAV */}
+      <nav className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-slate-900/95 backdrop-blur-2xl rounded-[35px] py-4 px-10 flex justify-between items-center z-[100] shadow-2xl border border-white/10">
         <button onClick={() => setView('explore')} className={view === 'explore' ? 'text-white' : 'text-white/30'}><Grid size={24}/></button>
         <button onClick={() => { if(!user) handleLogin(); else setView('post'); }} className="bg-indigo-600 text-white p-6 rounded-[30px] shadow-2xl -mt-16 active:scale-90 transition-transform"><Plus size={32}/></button>
         <button onClick={() => setView('merchant-dash')} className={view === 'merchant-dash' ? 'text-white' : 'text-white/30'}><User size={24}/></button>
       </nav>
-
-      {/* ZELLE MODAL */}
+      
+      {/* MODALS */}
       {showPayment && selectedDrop && (
         <div className="fixed inset-0 z-[150] bg-slate-900/95 backdrop-blur-xl flex items-center justify-center p-6" onClick={()=>setShowPayment(false)}>
-          <div className="bg-white p-10 rounded-[40px] text-center max-w-sm w-full" onClick={(e)=>e.stopPropagation()}>
+          <div className="bg-white p-10 rounded-[40px] text-center max-w-sm w-full shadow-2xl" onClick={(e)=>e.stopPropagation()}>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-8">Zelle Payment</p>
             <div className="bg-slate-50 p-8 rounded-[32px] mb-8 border border-slate-100 shadow-inner">
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(selectedDrop.zelleId)}`} className="mx-auto rounded-2xl w-full aspect-square object-contain shadow-md mb-6" alt="QR" />
               <p className="font-black text-slate-900 text-2xl tracking-tighter">{selectedDrop.zelleId}</p>
             </div>
-            <button onClick={() => { navigator.clipboard.writeText(selectedDrop.zelleId); alert("Copied!"); }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl mb-4">Copy ID</button>
+            <button onClick={() => { navigator.clipboard.writeText(selectedDrop.zelleId); alert("ID Copied!"); }} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl mb-4">Copy Zelle ID</button>
             <button onClick={()=>setShowPayment(false)} className="w-full py-5 bg-slate-100 text-slate-500 rounded-2xl font-black text-xs uppercase">Close</button>
+          </div>
+        </div>
+      )}
+
+      {previewItem && (
+        <div className="fixed inset-0 z-[150] bg-black/95 flex items-center justify-center p-6 animate-in fade-in" onClick={() => setPreviewItem(null)}>
+          <div className="bg-white rounded-[40px] overflow-hidden max-w-sm w-full shadow-2xl animate-in zoom-in-95" onClick={e=>e.stopPropagation()}>
+            <img src={previewItem.image} className="w-full h-96 object-cover" />
+            <div className="p-10 text-center bg-white">
+              <h3 className="text-3xl font-black mb-2 uppercase tracking-tighter">{previewItem.name}</h3>
+              <p className="text-indigo-600 font-black text-4xl mb-8">$ {previewItem.price}</p>
+              <button onClick={()=>setPreviewItem(null)} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest">Close</button>
+            </div>
           </div>
         </div>
       )}
