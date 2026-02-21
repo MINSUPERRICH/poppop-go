@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc, increment } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc, increment, setDoc } from 'firebase/firestore';
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { MapPin, User, ShoppingBag, QrCode, ChevronLeft, Plus, X, Map as MapIcon, Grid, Navigation, Search, Camera, LogIn, Clock, Calendar, ChevronRight, Loader2, Trash2, CheckCircle2, RefreshCw, Banknote, Heart, MessageCircle, AlertTriangle, Share2, Flame, Info, Edit3, TrendingUp } from 'lucide-react';
+import { MapPin, User, ShoppingBag, QrCode, ChevronLeft, Plus, X, Map as MapIcon, Grid, Navigation, Search, Camera, LogIn, Clock, Calendar, ChevronRight, Loader2, Trash2, CheckCircle2, RefreshCw, Banknote, Heart, MessageCircle, AlertTriangle, Share2, Flame, Info, Edit3, TrendingUp, Flag, ShieldBan } from 'lucide-react';
 
 // --- FIREBASE CONFIG ---
 const firebaseConfig = {
@@ -28,9 +28,8 @@ const App = () => {
   const [view, setView] = useState('explore'); 
   const [displayMode, setDisplayMode] = useState('list'); 
   const [drops, setDrops] = useState([]);
+  const [blockedMerchants, setBlockedMerchants] = useState([]); 
   const [selectedDrop, setSelectedDrop] = useState(null);
-  const [showPayment, setShowPayment] = useState(false);
-  const [previewItem, setPreviewItem] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [isPosting, setIsPosting] = useState(false);
   const [itemImageLoading, setItemImageLoading] = useState(false);
@@ -39,14 +38,26 @@ const App = () => {
     title: '', description: '', locationName: '', zelleId: '', phone: '', images: [], type: 'static', menu: [], closesAt: '', eventDate: new Date().toISOString().split('T')[0]
   });
 
+  // Auth listener
   useEffect(() => {
     return onAuthStateChanged(popAuth, (u) => setUser(u));
   }, []);
 
+  // Fetch Drops
   useEffect(() => {
     const q = query(collection(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops'));
     return onSnapshot(q, (s) => setDrops(s.docs.map(d => ({id: d.id, ...d.data()}))));
   }, []);
+
+  // UGC REQUIREMENT: Fetch Blocked Merchants for current user
+  useEffect(() => {
+    if (!user) {
+      setBlockedMerchants([]);
+      return;
+    }
+    const q = query(collection(popDb, 'users', user.uid, 'blocked'));
+    return onSnapshot(q, (s) => setBlockedMerchants(s.docs.map(d => d.data().merchantId)));
+  }, [user]);
 
   const isAdmin = user?.email?.toLowerCase() === MY_ADMIN_EMAIL.toLowerCase();
 
@@ -75,12 +86,41 @@ const App = () => {
 
   const handleUpdateListing = async (dropId, updates) => {
     try {
-      // If location name is edited, reset createdAt to shoot it to top of newest list
       const finalUpdates = { ...updates, updatedAt: serverTimestamp() };
       if (updates.locationName) finalUpdates.createdAt = serverTimestamp();
       await updateDoc(doc(popDb, 'artifacts', APP_PATH, 'public', 'data', 'drops', dropId), finalUpdates);
       alert("Store Updated!");
     } catch (e) { alert("Update failed."); }
+  };
+
+  // UGC REQUIREMENT: Report Content
+  const handleReportContent = async () => {
+    if (!user) return alert("Please log in to report content.");
+    const reason = prompt("Why are you reporting this store? (e.g., Inappropriate content, misleading, scam)");
+    if (reason) {
+      await addDoc(collection(popDb, 'reports'), {
+        dropId: selectedDrop.id,
+        merchantId: selectedDrop.merchantId,
+        reportedBy: user.uid,
+        reason: reason,
+        createdAt: serverTimestamp(),
+        status: 'pending-review'
+      });
+      alert("Thank you. Our moderation team will review this within 24 hours.");
+    }
+  };
+
+  // UGC REQUIREMENT: Block Merchant
+  const handleBlockMerchant = async () => {
+    if (!user) return alert("Please log in to block users.");
+    if (confirm("Are you sure you want to block this merchant? You will no longer see their stores.")) {
+      await setDoc(doc(popDb, 'users', user.uid, 'blocked', selectedDrop.merchantId), {
+        merchantId: selectedDrop.merchantId,
+        blockedAt: serverTimestamp()
+      });
+      alert("Merchant blocked.");
+      setView('explore');
+    }
   };
 
   const DetailMap = ({ drop }) => {
@@ -115,9 +155,9 @@ const App = () => {
 
             <div className="grid gap-6">
                 {drops
+                .filter(d => !blockedMerchants.includes(d.merchantId)) // UGC REQUIREMENT: Filter out blocked
                 .filter(d => d.title.toLowerCase().includes(searchTerm.toLowerCase()))
                 .sort((a, b) => {
-                    // TRENDING BOOST: 20+ Hypes go to the top
                     const aIsHot = (a.hypes || 0) >= 20 ? 1 : 0;
                     const bIsHot = (b.hypes || 0) >= 20 ? 1 : 0;
                     if (aIsHot !== bIsHot) return bIsHot - aIsHot;
@@ -143,6 +183,14 @@ const App = () => {
                   </div>
                 ))}
             </div>
+
+            {/* PRIVACY POLICY LINK REQUIREMENT */}
+            <div className="pt-8 pb-12 text-center">
+              <p className="text-xs text-slate-400 font-medium">
+                By using PopPop Go, you agree to our <br/>
+                <a href="https://www.poppopnow.com/privacy-policy" target="_blank" rel="noreferrer" className="text-indigo-600 underline font-bold mt-1 inline-block">Privacy Policy & Terms of Service</a>
+              </p>
+            </div>
           </div>
         )}
 
@@ -153,7 +201,6 @@ const App = () => {
                     <button onClick={() => setView('explore')} className="absolute top-6 left-6 bg-white p-3 rounded-2xl shadow-xl"><ChevronLeft/></button>
                 </div>
                 <div className="p-8 -mt-10 bg-white rounded-t-[40px] relative space-y-8">
-                    {/* LOOPNET HIERARCHY: Image > Map > Story > Menu */}
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
                             <h2 className="text-4xl font-black tracking-tighter leading-none">{selectedDrop.title}</h2>
@@ -195,6 +242,16 @@ const App = () => {
                             ))}
                         </div>
                     </div>
+
+                    {/* UGC REQUIREMENT: Reporting & Blocking UI */}
+                    <div className="pt-8 border-t border-slate-100 flex flex-col gap-3">
+                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest text-center">Safety & Moderation</p>
+                        <div className="flex gap-2">
+                          <button onClick={handleReportContent} className="flex-1 py-4 bg-red-50 text-red-600 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all"><Flag size={14}/> Report Listing</button>
+                          <button onClick={handleBlockMerchant} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all"><ShieldBan size={14}/> Block Merchant</button>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         )}
