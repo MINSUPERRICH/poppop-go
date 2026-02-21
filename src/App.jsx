@@ -188,7 +188,7 @@ const App = () => {
             <div className="pt-8 pb-12 text-center">
               <p className="text-xs text-slate-400 font-medium">
                 By using PopPop Go, you agree to our <br/>
-                <a href="https://www.poppopnow.com/privacy-policy" target="_blank" rel="noreferrer" className="text-indigo-600 underline font-bold mt-1 inline-block">Privacy Policy & Terms of Service</a>
+                <a href="https://www.poppopnow.com/privacy.html" target="_blank" rel="noreferrer" className="text-indigo-600 underline font-bold mt-1 inline-block">Privacy Policy & Terms of Service</a>
               </p>
             </div>
           </div>
@@ -324,3 +324,4 @@ const App = () => {
 };
 
 export default App;
+
